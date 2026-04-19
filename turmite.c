@@ -1,0 +1,1504 @@
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * Copyright (c) 2026 Evdokimov Stepan                                       *
+ *                                                                           *
+ * Permission is hereby granted, free of charge, to any person obtaining a   *
+ * copy of this software and associated documentation files (the "Software"),*
+ * to deal in the Software without restriction, including without limitation *
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,  *
+ * and/or sell copies of the Software, and to permit persons to whom the     *
+ * Software is furnished to do so, subject to the following conditions:      *
+ *                                                                           *
+ * The above copyright notice and this permission notice shall be included   *
+ * in all copies or substantial portions of the Software.                    *
+ *                                                                           *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS   *
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF                *
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN *
+ * NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,  *
+ * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR     *
+ * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE *
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.                                    *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+/* Without this define, usleep not defined */
+#if defined(__linux__)
+#  define _DEFAULT_SOURCE
+#endif
+
+#include <limits.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <ctype.h>
+#include <time.h>
+
+#if __STDC_VERSION__ >= 199901L
+#  include <stdbool.h>
+#else
+typedef unsigned char bool;
+#  define false 0
+#  define true  1
+#endif
+
+#if UINT_MAX < 0xFFFFFFFFul
+typedef unsigned long bit32_t;
+#define BIT32_C(lit) lit ## ul
+#else
+typedef unsigned bit32_t;
+#define BIT32_C(lit) lit ## u
+#endif
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                              Global constants                             *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#define DEAD_CELL " "
+#if USE_ASCII_GRAPHIC
+#  define ALIVE_CELL   "#"
+#  define  DEAD_CURSOR "."
+#  define ALIVE_CURSOR "%"
+#  define LU_CORNER    "+"
+#  define RU_CORNER    "+"
+#  define LD_CORNER    "+"
+#  define RD_CORNER    "+"
+#  define  HOR_BAR     "-"
+#  define  VER_BAR     "|"
+#  define LVER_BAR     "<"
+#  define RVER_BAR     ">"
+#else
+#  define ALIVE_CELL   "\xe2\x96\x88" /* U+2588 */
+#  define  DEAD_CURSOR "\xe2\x96\x91" /* U+2591 */
+#  define ALIVE_CURSOR "\xe2\x96\x93" /* U+2593 */
+#  define LU_CORNER    "\xe2\x95\x94" /* U+2554 */
+#  define RU_CORNER    "\xe2\x95\x97" /* U+2557 */
+#  define LD_CORNER    "\xe2\x95\x9a" /* U+255A */
+#  define RD_CORNER    "\xe2\x95\x9d" /* U+255D */
+#  define  HOR_BAR     "\xe2\x95\x90" /* U+2550 */
+#  define  VER_BAR     "\xe2\x95\x91" /* U+2551 */
+#  define LVER_BAR     "\xe2\x95\xa1" /* U+2561 */
+#  define RVER_BAR     "\xe2\x95\x9e" /* U+255E */
+#endif
+
+#define    DEAD_CELL_BLOCK DEAD_CELL DEAD_CELL
+#define   ALIVE_CELL_BLOCK ALIVE_CELL ALIVE_CELL
+#define  DEAD_CURSOR_BLOCK DEAD_CURSOR DEAD_CURSOR
+#define ALIVE_CURSOR_BLOCK ALIVE_CURSOR ALIVE_CURSOR
+
+#define MIN_FIELD_WIDTH  22
+#define MIN_FIELD_HEIGHT 1
+#define MAX_FIELD_WIDTH  1000
+#define MAX_FIELD_HEIGHT 1000
+
+#define DEFAULT_RULE   "B3/S23"
+#define DEFAULT_PROB   50
+#define DEFAULT_WIDTH  50
+#define DEFAULT_HEIGHT 25
+#define DEFAULT_INDENT 0
+
+#define INVALID_BS_MASK (-1ul)
+
+#define FRAMES_REP_SECOND    60 /* frame ~ one simulation step */
+#define DELAY_IN_MILLISECOND (1000 / FRAMES_REP_SECOND)
+
+#define MAX_RULE_LENGTH     26
+#define COUNT_TEMPLATE_SLOT 10
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                          Support macro-functions                          *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#define Stringify(x) # x
+#define stringify(x) Stringify(x)
+
+#define Concat(x, y) x ## y
+#define concat(x, y) Concat(x, y)
+
+#define static_assert(cond) typedef struct { \
+    char a[(cond) ? 1 : -1]; \
+} concat(__static_assert_, __LINE__)
+
+#define error_msg(message) do { \
+    fprintf(stderr, "ERROR: "message"\n"); \
+    goto error; \
+} while (0)
+
+#define error_msgf(fmt, arg) do { \
+    fprintf(stderr, "ERROR: "fmt"\n", arg); \
+    goto error; \
+} while (0)
+
+#define strlitlen(literal) (sizeof(literal) - 1)
+#define   shift_arg()      (--argc, *argv++)
+#define unshift_arg()      (++argc, --argv)
+#define min(a, b)          ((a) < (b) ? (a) : (b))
+#define countbit32(bits)   (((bits) + 31) / 32)
+
+#define bit32_get(bs, i) (((bs)[(i) / 32] >> ((i) % 32)) & 1)
+#define bit32_set(bs, i) do { (bs)[(i) / 32] |= BIT32_C(1) << ((i) % 32); } while (0)
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                Help message                               *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#define ESC "\x1b["
+#define RST ESC"0m"
+#define ITL ESC"3m"
+
+#define HELPMSG_NAME \
+    "NAME:"                                              "\n" \
+    "    gollike - Game of Life like automata simulator" "\n" \
+
+#define HELPMSG_USAGE \
+    "USAGE:"                                                                              "\n" \
+    "  $ gollike [-a | [-w "ITL"width"RST"] [-h "ITL"height"RST"]] [-i "ITL"indent"RST"]" "\n" \
+    "            [-r "ITL"rule"RST"] [-c "ITL"colors"RST"] [-p "ITL"probability"RST"]"    "\n" \
+    "            [-[1-9] "ITL"pattern"RST" | @"ITL"path"RST"] [--help]"                   "\n" \
+
+#define HELPMSG_OPTIONS_PT1 \
+    "OPTIONS:"                                                                                 "\n" \
+    "    -a, --autofit                   Sets width and height of field from size of console"  "\n" \
+    "    -w, --width "ITL"width"RST"               Sets width of field"                        "\n" \
+    "    -h, --height "ITL"height"RST"             Sets height of field"                       "\n" \
+    "    -i, --indent "ITL"indent"RST"             Sets indent from border for spawning cells" "\n" \
+
+#define HELPMSG_OPTIONS_PT2 \
+    "    -r, --rule "ITL"rule"RST"                 " \
+        "Sets a rule for a cellular automaton, using the format described below" "\n" \
+    "    -c, --colors "ITL"colors"RST"             " \
+        "Sets palette for drawing cell states, using format described below" "\n" \
+    "    -p, --probability "ITL"probability"RST"   " \
+        "Sets the probability as precent of a cell appearing at the beginning and at restart" "\n" \
+    "    -1, -2, ..., -9 "ITL"pattern"RST"|@"ITL"path"RST"   Sets a template in slot #, using format described below" "\n" \
+
+#define HELPMSG_OPTIONS_PT3 \
+    "        --help                      Outputs this message and quit" "\n" \
+
+#define HELPMSG_KEYS_COMMON \
+    "CONTROL KEYS:"                                       "\n" \
+    "  All mode:"                                         "\n" \
+    "    Q   Quit from program"                           "\n" \
+    "    E   Switch to edit/simulation mode"              "\n" \
+    "    W   Move the camera/cursor up"                   "\n" \
+    "    S   Move the camera/cursor down"                 "\n" \
+    "    A   Move the camera/cursor to the left"          "\n" \
+    "    D   Move the camera/cursor to the right"         "\n" \
+    " Sh-W   Move the camera/cursor up 10 step"           "\n" \
+    " Sh-S   Move the camera/cursor down 10 step"         "\n" \
+    " Sh-A   Move the camera/cursor to the left 10 step"  "\n" \
+    " Sh-D   Move the camera/cursor to the right 10 step" "\n" \
+
+#define HELPMSG_KEYS_SIM \
+    "  Simulation mode:"                                  "\n" \
+    "    R   Reset simulation"                            "\n" \
+    " Sh-R   Reset simulation with only full alive cells" "\n" \
+    "    P   Set/unset pause"                             "\n" \
+    "    O   Make one simulation step in pause"           "\n" \
+    "    F   Save current field (restore after press R)"  "\n" \
+    " Sh-F   Erase saved field"                           "\n" \
+
+#define HELPMSG_KEYS_EDIT \
+    "  Edit mode:"                                "\n" \
+    "    R   Enable/disable rectagular selection" "\n" \
+    " Sh-C   Clear all field"                     "\n" \
+    " Sh-X   Erase all except selection"          "\n" \
+    "    G   Make the cell dead"                  "\n" \
+    "    B   Make the cell alive"                 "\n" \
+    "    T   Toggle the cell state"               "\n" \
+    "    K   Make cell with value of brush"       "\n" \
+    "    J   Decrement brush value"               "\n" \
+    "    L   increment brush value"               "\n" \
+    "    C   Copy selected area to buffer"        "\n" \
+    "    X   Cut selected area to buffer"         "\n" \
+    "    0   Enable template from buffer"         "\n" \
+    "  1-9   Enable template with number #"       "\n" \
+
+#define HELPMSG_KEYS_TEMPLATE \
+    "  Template mode:"                                           "\n" \
+    "    E   Exit from template mode"                            "\n" \
+    "    P   Paste template and rewrite all cells in rect area"  "\n" \
+    "    O   Overlay template with write only alive cells"       "\n" \
+    "    F   Flip template by horizontal"                        "\n" \
+    " Sh-F   Flip template by vertical"                          "\n" \
+    "    G   180 degree rotation of template"                    "\n" \
+    "    R   90 degree rotation by clockwise of template"        "\n" \
+    " Sh-R   90 degree rotation by counterclockwise of template" "\n" \
+
+#define HELPMSG_RULE_SYNTAX \
+    "RULE SYNTAX:"                                                 "\n" \
+    "  Pattern (case insensitive): B<digits>/S<digits>[/G<count>]" "\n" \
+    "    <digits> in the range from 0 to 8 inclusive"              "\n" \
+    "    B<digits> - The number of neighbors to become alive"      "\n" \
+    "    S<digits> - The number of neighbors to stay alive"        "\n" \
+    "    G<count>  - The count of possible states (default 2)"     "\n" \
+
+#define HELPMSG_RULE_EXAMPLE \
+    "  Examples:"                                              "\n" \
+    "    B3/S23        - Conway's Game of life (default rule)" "\n" \
+    "    B3/S012345678 - Life without Death"                   "\n" \
+    "    B3678/S34678  - Day & Night"                          "\n" \
+    "    B35678/S5678  - Diamoeba"                             "\n" \
+    "    B368/S245     - Morley"                               "\n" \
+    "    B34/S34       - 34 Life"                              "\n" \
+    "    B2/S          - Seeds"                                "\n" \
+    "    B2/S/G3       - Brian's Brain"                        "\n" \
+    "    B2/S345/G4    - Star Wars"                            "\n" \
+    "    B34/S12/G3    - Frogs"                                "\n" \
+
+#define HELPMSG_TEMPLATE_SYNTAX_PT1 \
+    "TEMPLATE SYNTAX:"                                                                                "\n" \
+    "  Regex-like: <width>:<height>:(<repeate>?<tag>)*!"                                              "\n" \
+    "                               \\  RLE of figure  /"                                             "\n" \
+    "    <width>   - Width of template"                                                               "\n" \
+    "    <height>  - Height of template"                                                              "\n" \
+    "    <repeate> - Number of repetitions <tag>, greater or equal than 1"                            "\n" \
+    "    <tag>     - 'b' is dead cell, 'o' is alive cell, '$' is newline or '.<gen>g' for dying cell" "\n" \
+    "    allows the use of whitespace characters between tags in RLE"                                 "\n" \
+
+#define HELPMSG_TEMPLATE_SYNTAX_PT2 \
+    "  If string start with '@' it interpretated as path to .rle file"     "\n" \
+    "    Link file format: https://conwaylife.com/wiki/Run_Length_Encoded" "\n" \
+
+#define HELPMSG_TEMPLATE_EXAMPLE_PT1 \
+    "  Examples:"                "\n" \
+    "    3:3:bo$2bo$3o!"         "\n" \
+    "    |             .#."      "\n" \
+    "    +-> glider -> ..#"      "\n" \
+    "                  ###"      "\n" \
+    ""                           "\n" \
+    "    5:4:b4o$o3bo$4bo$o2bo!" "\n" \
+    "    |           .####"      "\n" \
+    "    +-> LWSS -> #...#"      "\n" \
+    "                ....#"      "\n" \
+    "                #..#."      "\n" \
+
+#define HELPMSG_TEMPLATE_EXAMPLE_PT2 \
+    "    36:9:"                                              "\n" \
+    "    24bo11b$22bobo11b$12b2o6b2o12b2o$11bo3bo4b2o12b2o$" "\n" \
+    "    2o8bo5bo3b2o14b$2o8bo3bob2o4bobo11b$10bo5bo7bo11b$" "\n" \
+    "    11bo3bo20b$12b2o!"                                  "\n" \
+
+#define HELPMSG_TEMPLATE_EXAMPLE_PT3 \
+    "    |              ........................#..........." "\n" \
+    "    |              ......................#.#..........." "\n" \
+    "    |              ............##......##............##" "\n" \
+    "    |   Gosper     ...........#...#....##............##" "\n" \
+    "    +-> glider  -> ##........#.....#...##.............." "\n" \
+    "        gun        ##........#...#.##....#.#..........." "\n" \
+    "                   ..........#.....#.......#..........." "\n" \
+    "                   ...........#...#...................." "\n" \
+    "                   ............##......................" "\n" \
+
+#define STDCLR_N \
+    ESC"48;5;0m 0" ESC"30m" ESC"48;5;1m 1" ESC"48;5;2m 2" ESC"48;5;3m 3" \
+    ESC"48;5;4m 4"          ESC"48;5;5m 5" ESC"48;5;6m 6" ESC"48;5;7m 7"
+
+#define STDCLR_B ESC"30m" \
+    ESC"48;5;08m 8" ESC"48;5;09m 9" ESC"48;5;10m10" ESC"48;5;11m11" \
+    ESC"48;5;12m12" ESC"48;5;13m13" ESC"48;5;14m14" ESC"48;5;15m15"
+
+#define HELPMSG_COLORS_PT1 \
+    "COLOR PALETTE:"                                                   "\n" \
+    "  Parameter format:"                                              "\n" \
+    "    <string> is list of color identificators separeted by commas" "\n" \
+    "" "\n" \
+    "  Standard terminal colors:"          "\n" \
+    "    " STDCLR_N ESC"0m"                "\n" \
+    "  Standard terminal bright colors:"   "\n" \
+    "    " STDCLR_B ESC"0m"                "\n" \
+    "  RGB cude 6x6x6 (0 <= r, g, b <= 5)" "\n" \
+    "    id = 16 + 36*r + 6*g + b"         "\n" \
+
+#define COLORFACE_R0_WH \
+    ESC"48;5;16m 16" ESC"48;5;17m 17" ESC"48;5;18m 18" ESC"48;5;19m 19" ESC"48;5;20m 20" ESC"48;5;21m 21" \
+    ESC"48;5;22m 22" ESC"48;5;23m 23" ESC"48;5;24m 24" ESC"48;5;25m 25" ESC"48;5;26m 26" ESC"48;5;27m 27" \
+    ESC"48;5;28m 28" ESC"48;5;29m 29" ESC"48;5;30m 30" ESC"48;5;31m 31" ESC"48;5;32m 32" ESC"48;5;33m 33"
+#define COLORFACE_R0_BL ESC"30m" \
+    ESC"48;5;34m 34" ESC"48;5;35m 35" ESC"48;5;36m 36" ESC"48;5;37m 37" ESC"48;5;38m 38" ESC"48;5;39m 39" \
+    ESC"48;5;40m 40" ESC"48;5;41m 41" ESC"48;5;42m 42" ESC"48;5;43m 43" ESC"48;5;44m 44" ESC"48;5;45m 45" \
+    ESC"48;5;46m 46" ESC"48;5;47m 47" ESC"48;5;48m 48" ESC"48;5;49m 49" ESC"48;5;50m 50" ESC"48;5;51m 51"
+
+#define COLORFACE_R1_WH \
+    ESC"48;5;52m 52" ESC"48;5;53m 53" ESC"48;5;54m 54" ESC"48;5;55m 55" ESC"48;5;56m 56" ESC"48;5;57m 57" \
+    ESC"48;5;58m 58" ESC"48;5;59m 59" ESC"48;5;60m 60" ESC"48;5;61m 61" ESC"48;5;62m 62" ESC"48;5;63m 63" \
+    ESC"48;5;64m 64" ESC"48;5;65m 65" ESC"48;5;66m 66" ESC"48;5;67m 67" ESC"48;5;68m 68" ESC"48;5;69m 69"
+#define COLORFACE_R1_BL ESC"30m" \
+    ESC"48;5;70m 70" ESC"48;5;71m 71" ESC"48;5;72m 72" ESC"48;5;73m 73" ESC"48;5;74m 74" ESC"48;5;75m 75" \
+    ESC"48;5;76m 76" ESC"48;5;77m 77" ESC"48;5;78m 78" ESC"48;5;79m 79" ESC"48;5;80m 80" ESC"48;5;81m 81" \
+    ESC"48;5;82m 82" ESC"48;5;83m 83" ESC"48;5;84m 84" ESC"48;5;85m 85" ESC"48;5;86m 86" ESC"48;5;87m 87"
+
+#define COLORFACE_R2_WH \
+    ESC"48;5;088m 88" ESC"48;5;089m 89" ESC"48;5;090m 90" ESC"48;5;091m 91" ESC"48;5;092m 92" ESC"48;5;093m 93" \
+    ESC"48;5;094m 94" ESC"48;5;095m 95" ESC"48;5;096m 96" ESC"48;5;097m 97" ESC"48;5;098m 98" ESC"48;5;099m 99" \
+    ESC"48;5;100m100" ESC"48;5;101m101" ESC"48;5;102m102" ESC"48;5;103m103" ESC"48;5;104m104" ESC"48;5;105m105"
+#define COLORFACE_R2_BL ESC"30m" \
+    ESC"48;5;106m106" ESC"48;5;107m107" ESC"48;5;108m108" ESC"48;5;109m109" ESC"48;5;110m110" ESC"48;5;111m111" \
+    ESC"48;5;112m112" ESC"48;5;113m113" ESC"48;5;114m114" ESC"48;5;115m115" ESC"48;5;116m116" ESC"48;5;117m117" \
+    ESC"48;5;118m118" ESC"48;5;119m119" ESC"48;5;120m120" ESC"48;5;121m121" ESC"48;5;122m122" ESC"48;5;123m123"
+
+#define COLORFACE_R3_WH \
+    ESC"48;5;124m124" ESC"48;5;125m125" ESC"48;5;126m126" ESC"48;5;127m127" ESC"48;5;128m128" ESC"48;5;129m129" \
+    ESC"48;5;130m130" ESC"48;5;131m131" ESC"48;5;132m132" ESC"48;5;133m133" ESC"48;5;134m134" ESC"48;5;135m135" \
+    ESC"48;5;136m136" ESC"48;5;137m137" ESC"48;5;138m138" ESC"48;5;139m139" ESC"48;5;140m140" ESC"48;5;141m141"
+#define COLORFACE_R3_BL ESC"30m" \
+    ESC"48;5;142m142" ESC"48;5;143m143" ESC"48;5;144m144" ESC"48;5;145m145" ESC"48;5;146m146" ESC"48;5;147m147" \
+    ESC"48;5;148m148" ESC"48;5;149m149" ESC"48;5;150m150" ESC"48;5;151m151" ESC"48;5;152m152" ESC"48;5;153m153" \
+    ESC"48;5;154m154" ESC"48;5;155m155" ESC"48;5;156m156" ESC"48;5;157m157" ESC"48;5;158m158" ESC"48;5;159m159"
+
+#define COLORFACE_R4_WH \
+    ESC"48;5;160m160" ESC"48;5;161m161" ESC"48;5;162m162" ESC"48;5;163m163" ESC"48;5;164m164" ESC"48;5;165m165" \
+    ESC"48;5;166m166" ESC"48;5;167m167" ESC"48;5;168m168" ESC"48;5;169m169" ESC"48;5;170m170" ESC"48;5;171m171" \
+    ESC"48;5;172m172" ESC"48;5;173m173" ESC"48;5;174m174" ESC"48;5;175m175" ESC"48;5;176m176" ESC"48;5;177m177"
+#define COLORFACE_R4_BL ESC"30m" \
+    ESC"48;5;178m178" ESC"48;5;179m179" ESC"48;5;180m180" ESC"48;5;181m181" ESC"48;5;182m182" ESC"48;5;183m183" \
+    ESC"48;5;184m184" ESC"48;5;185m185" ESC"48;5;186m186" ESC"48;5;187m187" ESC"48;5;188m188" ESC"48;5;189m189" \
+    ESC"48;5;190m190" ESC"48;5;191m191" ESC"48;5;192m192" ESC"48;5;193m193" ESC"48;5;194m194" ESC"48;5;195m195"
+
+#define COLORFACE_R5_WH \
+    ESC"48;5;196m196" ESC"48;5;197m197" ESC"48;5;198m198" ESC"48;5;199m199" ESC"48;5;200m200" ESC"48;5;201m201" \
+    ESC"48;5;202m202" ESC"48;5;203m203" ESC"48;5;204m204" ESC"48;5;205m205" ESC"48;5;206m206" ESC"48;5;207m207" \
+    ESC"48;5;208m208" ESC"48;5;209m209" ESC"48;5;210m210" ESC"48;5;211m211" ESC"48;5;212m212" ESC"48;5;213m213"
+#define COLORFACE_R5_BL ESC"30m" \
+    ESC"48;5;214m214" ESC"48;5;215m215" ESC"48;5;216m216" ESC"48;5;217m217" ESC"48;5;218m218" ESC"48;5;219m219" \
+    ESC"48;5;220m220" ESC"48;5;221m221" ESC"48;5;222m222" ESC"48;5;223m223" ESC"48;5;224m224" ESC"48;5;225m225" \
+    ESC"48;5;226m226" ESC"48;5;227m227" ESC"48;5;228m228" ESC"48;5;229m229" ESC"48;5;230m230" ESC"48;5;231m231"
+
+#define HELPMSG_COLORS_PT2 \
+    "  Black to white gradient" "\n" \
+    "    "   ESC"48;5;232m232" ESC"48;5;233m233" ESC"48;5;234m234" ESC"48;5;235m235" ESC"48;5;236m236" ESC"48;5;237m237" \
+             ESC"48;5;238m238" ESC"48;5;239m239" ESC"48;5;240m240" ESC"48;5;241m241" ESC"48;5;242m242" ESC"48;5;243m243" \
+    ESC"30m" ESC"48;5;244m244" ESC"48;5;245m245" ESC"48;5;246m246" ESC"48;5;247m247" ESC"48;5;248m248" ESC"48;5;249m249" \
+             ESC"48;5;250m250" ESC"48;5;251m251" ESC"48;5;252m252" ESC"48;5;253m253" ESC"48;5;254m254" ESC"48;5;255m255" \
+    ESC"0m" "\n" \
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                        Information and mode string                        *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#define HOR_BAR_LINE \
+    HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
+    HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
+    HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
+    HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
+    HOR_BAR HOR_BAR HOR_BAR HOR_BAR
+
+/* Maximum min-width case  * * * * * * * * * * * *
+ * -< B012345678/S012345678/G256 | DDxDD/99% >-  *
+ * * * * * * * * * * * * * * * * * * * * * * * * */
+#define INFOFMT " %s " VER_BAR " %lux%lu/%lu%% "
+
+#define MODE_TXT_SIMULATION "SIMULATION"
+#define MODE_TXT_PAUSE      "PAUSE"
+#define MODE_TXT_CURSOR     "CURSOR: %lux%lu %u"
+#define MODE_TXT_RECTANGLE  "RECTANGLE: %lux%lu"
+#define MODE_TXT_TEMPLATE   "TEMPLATE: %lux%lu #%u"
+#define MODE_TXT_CLIPBOARD  "CLIPBOARD: %lux%lu"
+
+#define CLEAR_BAR fputs(HOR_BAR_LINE ESC"3G", stdout)
+#define PUT_BAR_SIMULATION do { CLEAR_BAR; fputs(LVER_BAR" "MODE_TXT_SIMULATION" "RVER_BAR, stdout); } while (0)
+#define PUT_BAR_PAUSE      do { CLEAR_BAR; fputs(LVER_BAR" "MODE_TXT_PAUSE     " "RVER_BAR, stdout); } while (0)
+#define PUT_BAR_CURSOR do { CLEAR_BAR; \
+    printf(LVER_BAR" "MODE_TXT_CURSOR" "RVER_BAR, cursor_x, cursor_y, brush); \
+} while (0)
+#define PUT_BAR_RECTANGLE do { CLEAR_BAR; \
+    printf(LVER_BAR" "MODE_TXT_RECTANGLE" "RVER_BAR, \
+        cursor_x - rect_x + 1, cursor_y - rect_y + 1); \
+} while (0)
+#define PUT_BAR_TEMPLATE do { CLEAR_BAR; \
+    printf(LVER_BAR" "MODE_TXT_TEMPLATE" "RVER_BAR, cursor_x, cursor_y, mode - MODE_TEMPLATE_1 + 1); \
+} while (0)
+#define PUT_BAR_CLIPBOARD do { CLEAR_BAR; \
+    printf(LVER_BAR" "MODE_TXT_CLIPBOARD" "RVER_BAR, cursor_x, cursor_y); \
+} while (0)
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                Static asserts for checking constant values                *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+static_assert(strlitlen(HOR_BAR_LINE) / strlitlen(HOR_BAR) == 2 * MIN_FIELD_WIDTH);
+
+static_assert(strlitlen(MODE_TXT_SIMULATION) + 6 <= 2 * MIN_FIELD_WIDTH);
+static_assert(strlitlen(MODE_TXT_PAUSE     ) + 6 <= 2 * MIN_FIELD_WIDTH);
+static_assert(strlitlen(MODE_TXT_CURSOR    ) + 5 <= 2 * MIN_FIELD_WIDTH);
+static_assert(strlitlen(MODE_TXT_RECTANGLE ) + 6 <= 2 * MIN_FIELD_WIDTH);
+static_assert(strlitlen(MODE_TXT_TEMPLATE  ) + 5 <= 2 * MIN_FIELD_WIDTH);
+static_assert(strlitlen(MODE_TXT_CLIPBOARD ) + 6 <= 2 * MIN_FIELD_WIDTH);
+
+static_assert(strlitlen(DEFAULT_RULE) <= MAX_RULE_LENGTH);
+static_assert(MIN_FIELD_WIDTH  <= DEFAULT_WIDTH  && DEFAULT_WIDTH  <= MAX_FIELD_WIDTH );
+static_assert(MIN_FIELD_HEIGHT <= DEFAULT_HEIGHT && DEFAULT_HEIGHT <= MAX_FIELD_HEIGHT);
+static_assert(DEFAULT_INDENT <= DEFAULT_WIDTH  / 2);
+static_assert(DEFAULT_INDENT <= DEFAULT_HEIGHT / 2);
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                         Main and support functions                        *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+/* Rule bit interpretation * * * * * *
+ * Example rule B368/S245 (Morley)   *
+ *    bit index :        1         0 *
+ *                765432109876543210 *
+ *   birth bits :          101001000 *
+ * survive bits : 000110100          *
+ * bsmask (hex) =               6948 *
+ * * * * * * * * * * * * * * * * * * */
+
+typedef unsigned char uchar;
+typedef unsigned long ulong;
+
+typedef struct {
+    uchar* array;
+    ulong  width;
+    ulong height;
+} template_t;
+
+typedef enum {
+    MODE_SIMULATION = 0,
+    MODE_PAUSE,
+    MODE_ONESTEP,
+
+    MODE_CURSOR,
+    MODE_RECTANGLE,
+
+    MODE_TEMPLATE_1,
+    MODE_TEMPLATE_2,
+    MODE_TEMPLATE_3,
+    MODE_TEMPLATE_4,
+    MODE_TEMPLATE_5,
+    MODE_TEMPLATE_6,
+    MODE_TEMPLATE_7,
+    MODE_TEMPLATE_8,
+    MODE_TEMPLATE_9,
+    MODE_CLIPBOARD
+} mode_action_t;
+
+static char state_colors[256][16] = {0};
+
+float randf0t1(void);
+uchar randrange(uchar max);
+
+ulong parse_rule(const char* str, uchar* gens);
+template_t parse_rle(const char* rle, uchar gens, ulong width, ulong height);
+void normalization_rule(char* rule, ulong mask, uchar gens);
+
+void draw_border(ulong w, ulong h);
+
+void move_to_up   (uchar* field, size_t width, size_t heigth);
+void move_to_down (uchar* field, size_t width, size_t heigth);
+void move_to_left (uchar* field, size_t width, size_t heigth);
+void move_to_right(uchar* field, size_t width, size_t heigth);
+
+void move_to_up_by_3    (uchar* field, size_t width, size_t heigth);
+void move_to_down_by_3  (uchar* field, size_t width, size_t heigth);
+void move_to_left_by_10 (uchar* field, size_t width, size_t heigth);
+void move_to_right_by_10(uchar* field, size_t width, size_t heigth);
+
+void flip_horizontally(template_t* tmpl);
+void flip_vertically  (template_t* tmpl);
+void rotate_by_180deg (template_t* tmpl);
+void transpose(template_t* tmpl, bit32_t* bitset);
+
+void setup_terminal(void);
+bool get_console_size(ulong* width, ulong* height);
+void sleep_ms(ulong ms);
+bool is_symbol_received(void);
+int received_symbol(void);
+
+int main(int argc, char** argv) {
+    size_t i, j; ulong prob_int;
+    int rc = EXIT_FAILURE;
+
+    /* Parameters of simulation */
+    ulong width, height, indent, bsmask;
+    char rule[MAX_RULE_LENGTH + 1];
+    float prob; uchar gens, brush;
+
+    bool full_alive_only = false;
+    bool field_is_saved  = false;
+
+    /* Coordinates */
+    ulong cursor_x = 0, cursor_y = 0;
+    ulong   rect_x = 0,   rect_y = 0;
+
+    /* Program mode, aka state */
+    mode_action_t mode = MODE_SIMULATION;
+
+    /* Slots with pattern for paste */
+    template_t template_slots[COUNT_TEMPLATE_SLOT] = {0};
+
+    /* Bitset for use in transpose */
+    bit32_t* bitset = NULL;
+
+    /* Array with field */
+    uchar* field = NULL;
+    uchar* saved_field = NULL;
+#define FLDV(i, j) field[width * (i) + (j)]
+#define FLDP(i, j) (field + width * (i) + (j))
+
+    /* Flag parsed options */
+    bool   rule_is_set = false;
+    bool   prob_is_set = false;
+    bool  width_is_set = false;
+    bool height_is_set = false;
+    bool indent_is_set = false;
+    bool colors_is_set = false;
+
+    (void)shift_arg(); /* skip program name */
+
+    /* Argument parsing loop */
+    while (argc > 0) {
+        char* opt = shift_arg();
+        char* arg = shift_arg(); /* always argument or NULL, no UB */
+        char* end;
+
+        if (strcmp(opt, "--help") == 0) {
+            putchar('\n'); fputs(HELPMSG_NAME                , stdout);
+            putchar('\n'); fputs(HELPMSG_USAGE               , stdout);
+            putchar('\n'); fputs(HELPMSG_OPTIONS_PT1         , stdout);
+                           fputs(HELPMSG_OPTIONS_PT2         , stdout);
+            putchar('\n'); fputs(HELPMSG_OPTIONS_PT3         , stdout);
+            putchar('\n'); fputs(HELPMSG_KEYS_COMMON         , stdout);
+            putchar('\n'); fputs(HELPMSG_KEYS_SIM            , stdout);
+            putchar('\n'); fputs(HELPMSG_KEYS_EDIT           , stdout);
+            putchar('\n'); fputs(HELPMSG_KEYS_TEMPLATE       , stdout);
+            putchar('\n'); fputs(HELPMSG_RULE_SYNTAX         , stdout);
+            putchar('\n'); fputs(HELPMSG_RULE_EXAMPLE        , stdout);
+            putchar('\n'); fputs(HELPMSG_TEMPLATE_SYNTAX_PT1 , stdout);
+                           fputs(HELPMSG_TEMPLATE_SYNTAX_PT2 , stdout);
+            putchar('\n'); fputs(HELPMSG_TEMPLATE_EXAMPLE_PT1, stdout);
+            putchar('\n'); fputs(HELPMSG_TEMPLATE_EXAMPLE_PT2, stdout);
+                           fputs(HELPMSG_TEMPLATE_EXAMPLE_PT3, stdout);
+            putchar('\n'); fputs(HELPMSG_COLORS_PT1          , stdout);
+                           fputs("    "COLORFACE_R0_WH       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R1_WH       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R2_WH       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R3_WH       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R4_WH       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R5_WH       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R0_BL       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R1_BL       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R2_BL       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R3_BL       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R4_BL       , stdout); puts(ESC"0m");
+                           fputs("    "COLORFACE_R5_BL       , stdout); puts(ESC"0m");
+                           fputs(HELPMSG_COLORS_PT2          , stdout);
+            putchar('\n');
+            return 0; /* <- premature exit */
+        } else if (strcmp(opt, "-a") == 0 || strcmp(opt, "--autofit") == 0) {
+            if ( width_is_set) error_msg( "width value has already been set");
+            if (height_is_set) error_msg("height value has already been set");
+            width_is_set = height_is_set = true;
+
+            if (!get_console_size(&width, &height))
+                error_msg("couldn't get console size");
+            width = width / 2 - 1;
+            height = height - 2;
+            if (width < MIN_FIELD_WIDTH || width > MAX_FIELD_WIDTH)
+                error_msg("incorrect value for width");
+            if (height < MIN_FIELD_HEIGHT || height > MAX_FIELD_HEIGHT)
+                error_msg("incorrect value for height");
+
+            unshift_arg();
+        } else if (strcmp(opt, "-r") == 0 || strcmp(opt, "--rule") == 0) {
+            if (!arg) error_msg("not enough arguments for option");
+            if (rule_is_set) error_msg("rule value has already been set");
+            rule_is_set = true;
+
+            bsmask = parse_rule(arg, &gens);
+            if (bsmask == INVALID_BS_MASK) goto error;
+            normalization_rule(rule, bsmask, gens);
+        } else if (strcmp(opt, "-p") == 0 || strcmp(opt, "--probability") == 0) {
+            if (!arg) error_msg("not enough arguments for option");
+            if (prob_is_set) error_msg("probability value has already been set");
+            prob_is_set = true;
+
+            prob_int = strtoul(arg, &end, 10);
+            if (*end != '\0' || prob_int < 1 || prob_int > 99)
+                error_msg("incorrect value for probability");
+        } else if (strcmp(opt, "-w") == 0 || strcmp(opt, "--width") == 0) {
+            if (!arg) error_msg("not enough arguments for option");
+            if (width_is_set) error_msg("width value has already been set");
+            width_is_set = true;
+
+            width = strtoul(arg, &end, 10);
+            if (*end != '\0' || width < MIN_FIELD_WIDTH || width > MAX_FIELD_WIDTH)
+                error_msg("incorrect value for width");
+        } else if (strcmp(opt, "-h") == 0 || strcmp(opt, "--height") == 0) {
+            if (!arg) error_msg("not enough arguments for option");
+            if (height_is_set) error_msg("height value has already been set");
+            height_is_set = true;
+
+            height = strtoul(arg, &end, 10);
+            if (*end != '\0' || height < MIN_FIELD_HEIGHT || height > MAX_FIELD_HEIGHT)
+                error_msg("incorrect value for height");
+        } else if (strcmp(opt, "-i") == 0 || strcmp(opt, "--indent") == 0) {
+            if (!arg) error_msg("not enough arguments for option");
+            if (indent_is_set) error_msg("indent value has already been set");
+            indent_is_set = true;
+
+            indent = strtoul(arg, &end, 10);
+            if (*end != '\0') error_msg("incorrect value for indent");
+        } else if (strcmp(opt, "-c") == 0 || strcmp(opt, "--colors") == 0) {
+            ulong color_id; i = 0;
+            if (!arg) error_msg("not enough arguments for option");
+            if (colors_is_set) error_msg("color values has already been set");
+            colors_is_set = true;
+
+            do {
+                if (i > 255) error_msg("too many colors");
+
+                while (isspace(*arg)) ++arg;
+                for (color_id = 0; isdigit(*arg); arg++)
+                    color_id = 10 * color_id + (*arg - '0');
+                while (isspace(*arg)) ++arg;
+
+                if (*arg != '\0' && *arg != ',')
+                    error_msgf("unexpected character '%c' in color list", *arg);
+                else if (*arg == ',') ++arg;
+                if (color_id > 255) error_msgf("incorrect id '%lu' for color", color_id);
+
+                sprintf(state_colors[i++], ESC"38;5;%lum", color_id);
+            } while (*arg);
+
+            if (i < 2) error_msg("not enough colors");
+            state_colors[0][2] = '4';
+        } else if (opt[0] == '-' && ('1' <= opt[1] && opt[1] <= '9') && opt[2] == '\0') {
+            ulong slot_index = opt[1] - '1';
+            if (!arg) error_msg("not enough arguments for option");
+            if (template_slots[slot_index].array)
+                error_msgf("template in slot %lu has already been set", slot_index + 1);
+            template_slots[slot_index].array = (void*)arg;
+        } else
+            error_msgf("expected option, but got '%s'", opt);
+    }
+
+    /* Set default value for parameters */
+    if (!  prob_is_set) prob_int = DEFAULT_PROB;
+    if (! width_is_set) width    = DEFAULT_WIDTH;
+    if (!height_is_set) height   = DEFAULT_HEIGHT;
+    if (!indent_is_set) indent   = DEFAULT_INDENT;
+    if (!  rule_is_set) {
+        bsmask = parse_rule(DEFAULT_RULE, &gens);
+        strcpy(rule, DEFAULT_RULE);
+    }
+
+    prob = (float)prob_int / 100.f;
+    brush = gens;
+
+    /* Checking colors for states */
+    if (colors_is_set && strlen(state_colors[gens]) == 0)
+        error_msg("not enough colors for states");
+
+    /* Checking indent after get width and height */
+    if (indent > width / 2 || indent > height / 2)
+        error_msg("the indentation value is too high");
+
+    /* Convert RLE string to template */
+    for (i = 0; i < COUNT_TEMPLATE_SLOT; i++) {
+        if (!template_slots[i].array) continue;
+        template_slots[i] = parse_rle(
+            (void*)template_slots[i].array, gens, width, height);
+        if (!template_slots[i].array) goto error;
+    }
+
+    /* Allocation memory for field */
+    /* additional lines for moving of field and correct updating */
+    field = malloc(width * (height + 3));
+    if (!field) error_msg("couldn't allocate memory");
+    saved_field = malloc(width * height);
+    if (!saved_field) error_msg("couldn't allocate memory");
+
+    /* Allocation memory for bitset */
+    bitset = malloc(countbit32(width * height));
+    if (!bitset) error_msg("couldn't allocate memory");
+
+    setup_terminal();
+    fputs(ESC"?25l", stdout); /* hide cursor */
+
+    /* Drawing border and information on screen */
+    draw_border(width * 2, height);
+    fputs(ESC"3G" LVER_BAR" "MODE_TXT_SIMULATION" "RVER_BAR, stdout);
+    printf(ESC"1;3H" LVER_BAR INFOFMT RVER_BAR, rule, width, height, prob_int);
+
+    srand(time(NULL));
+restart: /* Initialization of fields */
+    if (field_is_saved)
+        memcpy(field, saved_field, width * height);
+    else {
+        memset(field, 0, width * height);
+        for (i = indent; i < height - indent; i++)
+        for (j = indent; j < width  - indent; j++)
+            FLDV(i, j) = randf0t1() < prob
+                ? (full_alive_only ? gens : randrange(gens - 1) + 1) : 0;
+    }
+
+    /* Main program loop */
+    while (true) {
+        fputs(ESC"2;2H", stdout); /* move to left-up cell */
+
+        /* Drawing on screen */
+        fputs(state_colors[0], stdout);
+        for (i = 0; i < height; i++) {
+            for (j = 0; j < width; j++) {
+                uchar cell = FLDV(i, j);
+                bool has_cell = cell > 0;
+                fputs(state_colors[cell], stdout);
+                switch(mode) {
+                    case MODE_SIMULATION: case MODE_PAUSE: case MODE_ONESTEP:
+                        fputs(has_cell ? ALIVE_CELL_BLOCK : DEAD_CELL_BLOCK, stdout);
+                        break;
+
+                    case MODE_CURSOR:
+                        if (cursor_x == j && cursor_y == i) {
+                            fputs(state_colors[has_cell ? cell : gens], stdout);
+                            fputs(has_cell ? ALIVE_CURSOR_BLOCK : DEAD_CURSOR_BLOCK, stdout);
+                        } else
+                            fputs(has_cell ? ALIVE_CELL_BLOCK : DEAD_CELL_BLOCK, stdout);
+                        break;
+
+                    case MODE_RECTANGLE:
+                        if (rect_x <= j && j <= cursor_x && rect_y <= i && i <= cursor_y) {
+                            fputs(state_colors[has_cell ? cell : gens], stdout);
+                            fputs(has_cell ? ALIVE_CURSOR_BLOCK : DEAD_CURSOR_BLOCK, stdout);
+                        } else
+                            fputs(has_cell ? ALIVE_CELL_BLOCK : DEAD_CELL_BLOCK, stdout);
+                        break;
+
+                    case MODE_TEMPLATE_1: case MODE_TEMPLATE_2: case MODE_TEMPLATE_3:
+                    case MODE_TEMPLATE_4: case MODE_TEMPLATE_5: case MODE_TEMPLATE_6:
+                    case MODE_TEMPLATE_7: case MODE_TEMPLATE_8: case MODE_TEMPLATE_9:
+                    case MODE_CLIPBOARD: {
+                        template_t* slot = template_slots + mode - MODE_TEMPLATE_1;
+                        if (cursor_x <= j && j < cursor_x + slot->width &&
+                            cursor_y <= i && i < cursor_y + slot->height) {
+                            uchar hole = slot->array[slot->width * (i - cursor_y) + (j - cursor_x)];
+                            fputs(state_colors[hole ? hole : gens], stdout);
+                            fputs(hole > 0 ? ALIVE_CURSOR : DEAD_CURSOR, stdout);
+                            fputs(state_colors[FLDV(i, j)], stdout);
+                            fputs(has_cell ? ALIVE_CELL : DEAD_CELL, stdout);
+                        } else
+                            fputs(has_cell ? ALIVE_CELL_BLOCK : DEAD_CELL_BLOCK, stdout);
+                    } break;
+                }
+            }
+            fputs(ESC"2G" ESC"1B", stdout);
+        }
+        fputs(ESC"0m", stdout);
+
+        /* Handling pressing keys */
+        if (mode == MODE_ONESTEP) mode = MODE_PAUSE;
+        if (is_symbol_received()) {
+            int key = received_symbol();
+
+            /* Exit from main loop */
+            if (key == 'q') {
+                printf(ESC"%lu;1H\n", height + 2);
+                break;
+            }
+
+            switch (mode) {
+                /* Simulation mode */
+                case MODE_SIMULATION:
+                    /**/ if (key == 'p' || key == ' ') { mode = MODE_PAUSE; PUT_BAR_PAUSE; }
+                    goto common_SIM_and_PAUSE;
+                case MODE_PAUSE:
+                    /**/ if (key == 'p' || key == ' ') { mode = MODE_SIMULATION; PUT_BAR_SIMULATION; }
+                    else if (key == 'o') mode = MODE_ONESTEP;
+                    goto common_SIM_and_PAUSE;
+                case MODE_ONESTEP: /* nothing */ break;
+                common_SIM_and_PAUSE:
+                    switch (key) {
+                        case 'r': full_alive_only = false; goto restart;
+                        case 'R': full_alive_only =  true; goto restart;
+
+                        case 'w': move_to_up   (field, width, height); break;
+                        case 's': move_to_down (field, width, height); break;
+                        case 'a': move_to_left (field, width, height); break;
+                        case 'd': move_to_right(field, width, height); break;
+
+                        case 'W':
+                            move_to_up_by_3(field, width, height);
+                            move_to_up_by_3(field, width, height);
+                            move_to_up_by_3(field, width, height);
+                            move_to_up     (field, width, height);
+                            break;
+                        case 'S':
+                            move_to_down_by_3(field, width, height);
+                            move_to_down_by_3(field, width, height);
+                            move_to_down_by_3(field, width, height);
+                            move_to_down     (field, width, height);
+                            break;
+                        case 'A': move_to_left_by_10 (field, width, height); break;
+                        case 'D': move_to_right_by_10(field, width, height); break;
+
+                        case 'f': field_is_saved = true; memcpy(saved_field, field, width * height); break;
+                        case 'F': field_is_saved = false; break;
+
+                        case 'e': {
+                            cursor_x = width  / 2;
+                            cursor_y = height / 2;
+                            rect_x = rect_y = 0;
+
+                            mode = MODE_CURSOR;
+                            PUT_BAR_CURSOR;
+                        } break;
+                    } break;
+
+                /* Edit mode */
+                case MODE_CURSOR:
+                    /*  */ if (key == '0' && template_slots[9].array) {
+                        mode = MODE_CLIPBOARD; PUT_BAR_CLIPBOARD;
+                        cursor_x = min(cursor_x,  width - template_slots[9]. width);
+                        cursor_y = min(cursor_y, height - template_slots[9].height);
+                    } else if ('1' <= key && key <= '9') {
+                        ulong index = key - '1';
+                        if (template_slots[index].array) {
+                            mode = MODE_TEMPLATE_1 + index; PUT_BAR_TEMPLATE;
+                            cursor_x = min(cursor_x,  width - template_slots[index]. width);
+                            cursor_y = min(cursor_y, height - template_slots[index].height);
+                        }
+                    }
+
+                    else if (key == 'r') { mode = MODE_RECTANGLE; rect_x = cursor_x; rect_y = cursor_y; }
+
+                    else if (key == 'g') FLDV(cursor_y, cursor_x) = 0;
+                    else if (key == 'b') FLDV(cursor_y, cursor_x) = gens;
+                    else if (key == 't') FLDV(cursor_y, cursor_x) = gens - FLDV(cursor_y, cursor_x);
+                    else if (key == 'k') FLDV(cursor_y, cursor_x) = brush;
+
+                    goto common_CUR_and_RECT;
+                case MODE_RECTANGLE:
+                    /**/ if (key == 'r') { mode = MODE_CURSOR; rect_x = rect_y = 0; }
+
+                    else if (key == 'g')
+                        for (i = rect_y; i <= cursor_y; i++)
+                        for (j = rect_x; j <= cursor_x; j++)
+                            FLDV(i, j) = 0;
+                    else if (key == 'b')
+                        for (i = rect_y; i <= cursor_y; i++)
+                        for (j = rect_x; j <= cursor_x; j++)
+                            FLDV(i, j) = gens;
+                    else if (key == 't')
+                        for (i = rect_y; i <= cursor_y; i++)
+                        for (j = rect_x; j <= cursor_x; j++)
+                            FLDV(i, j) = gens - FLDV(i, j);
+                    else if (key == 'k')
+                        for (i = rect_y; i <= cursor_y; i++)
+                        for (j = rect_x; j <= cursor_x; j++)
+                            FLDV(i, j) = brush;
+
+                    else if (key == 'X') {
+                        memset(FLDP(0, 0), 0, width * rect_y);
+                        memset(FLDP(cursor_y + 1, 0), 0, width * (height - cursor_y - 1));
+                        for (i = rect_y; i <= cursor_y; i++) {
+                            memset(FLDP(i, 0), 0, rect_x);
+                            memset(FLDP(i, cursor_x + 1), 0, width - cursor_x - 1);
+                        }
+                    }
+
+                    else if (key == 'c' || key == 'x') {
+                        size_t rect_w = cursor_x - rect_x + 1;
+                        size_t rect_h = cursor_y - rect_y + 1;
+                        template_t* slot = template_slots + 9;
+                        uchar* newptr = realloc(slot->array, rect_w * rect_h);
+                        if (newptr) {
+                            slot->array = newptr;
+                            slot->width  = rect_w;
+                            slot->height = rect_h;
+                            for (i = rect_y; i <= cursor_y; i++)
+                            for (j = rect_x; j <= cursor_x; j++) {
+                                slot->array[slot->width * (i - rect_y) + (j - rect_x)] = FLDV(i, j);
+                                if (key == 'x') FLDV(i, j) = 0;
+                            }
+                        }
+                    }
+
+                    goto common_CUR_and_RECT;
+                common_CUR_and_RECT:
+                    switch (key) {
+                        case 'w': if (rect_y < cursor_y    ) { cursor_y -= 1; } break;
+                        case 's': if (cursor_y + 1 < height) { cursor_y += 1; } break;
+                        case 'a': if (rect_x < cursor_x    ) { cursor_x -= 1; } break;
+                        case 'd': if (cursor_x + 1 < width ) { cursor_x += 1; } break;
+
+                        case 'W': if (rect_y + 10 <= cursor_y) { cursor_y -= 10; } break;
+                        case 'S': if (cursor_y + 10 < height ) { cursor_y += 10; } break;
+                        case 'A': if (rect_x + 10 <= cursor_x) { cursor_x -= 10; } break;
+                        case 'D': if (cursor_x + 10 < width  ) { cursor_x += 10; } break;
+
+                        case 'j': if (brush >    0) { brush -= 1; } break;
+                        case 'l': if (brush < gens) { brush += 1; } break;
+
+                        case 'C': memset(field, 0, width * height); break;
+
+                        case 'e': mode = MODE_PAUSE; PUT_BAR_PAUSE; break;
+                    }
+                    /**/ if (mode == MODE_CURSOR) PUT_BAR_CURSOR;
+                    else if (mode == MODE_RECTANGLE) PUT_BAR_RECTANGLE;
+                    break;
+
+                /* Template mode */
+                case MODE_TEMPLATE_1: case MODE_TEMPLATE_2: case MODE_TEMPLATE_3:
+                case MODE_TEMPLATE_4: case MODE_TEMPLATE_5: case MODE_TEMPLATE_6:
+                case MODE_TEMPLATE_7: case MODE_TEMPLATE_8: case MODE_TEMPLATE_9:
+                case MODE_CLIPBOARD: {
+                    template_t* slot = template_slots + mode - MODE_TEMPLATE_1;
+                    switch (key) {
+                        case 'w': if (0 < cursor_y                    ) { cursor_y -= 1; } break;
+                        case 's': if (cursor_y + slot->height < height) { cursor_y += 1; } break;
+                        case 'a': if (0 < cursor_x                    ) { cursor_x -= 1; } break;
+                        case 'd': if (cursor_x + slot->width  < width ) { cursor_x += 1; } break;
+
+                        case 'W': if (10 <= cursor_y                        ) { cursor_y -= 10; } break;
+                        case 'S': if (cursor_y + slot->height + 10 <= height) { cursor_y += 10; } break;
+                        case 'A': if (10 <= cursor_x                        ) { cursor_x -= 10; } break;
+                        case 'D': if (cursor_x + slot->width  + 10 <= width ) { cursor_x += 10; } break;
+
+                        case 'f': flip_horizontally(slot); break;
+                        case 'F': flip_vertically  (slot); break;
+                        case 'g': rotate_by_180deg (slot); break;
+
+                        case 'r': if (slot->height <= width && slot->width <= height) {
+                            transpose(slot, bitset);
+                            flip_horizontally(slot);
+                            cursor_x = min(cursor_x,  width - slot-> width);
+                            cursor_y = min(cursor_y, height - slot->height);
+                        } break;
+                        case 'R': if (slot->height <= width && slot->width <= height) {
+                            flip_horizontally(slot);
+                            transpose(slot, bitset);
+                            cursor_x = min(cursor_x,  width - slot-> width);
+                            cursor_y = min(cursor_y, height - slot->height);
+                        } break;
+
+                        case 'p':
+                            for (i = cursor_y; i < cursor_y + slot->height; i++)
+                            for (j = cursor_x; j < cursor_x + slot-> width; j++)
+                                FLDV(i, j) = slot->array[slot->width * (i - cursor_y) + (j - cursor_x)];
+                            break;
+                        case 'o':
+                            for (i = cursor_y; i < cursor_y + slot->height; i++)
+                            for (j = cursor_x; j < cursor_x + slot-> width; j++)
+                                if (slot->array[slot->width * (i - cursor_y) + (j - cursor_x)] > 0)
+                                    FLDV(i, j) = slot->array[slot->width * (i - cursor_y) + (j - cursor_x)];
+                            break;
+
+                        case 'e': mode = MODE_CURSOR; PUT_BAR_CURSOR; break;
+                    }
+                    /**/ if (MODE_TEMPLATE_1 <= mode && mode <= MODE_TEMPLATE_9) PUT_BAR_TEMPLATE;
+                    else if (mode == MODE_CLIPBOARD) PUT_BAR_CLIPBOARD;
+                } break;
+            }
+        }
+
+        /* Update current field */
+        if (mode == MODE_SIMULATION || mode == MODE_ONESTEP) {
+            memcpy(FLDP(height + 0, 0), FLDP(         0, 0), width); /* save first line after last */
+            memcpy(FLDP(height + 1, 0), FLDP(height - 1, 0), width); /* update window: previous line */
+            memcpy(FLDP(height + 2, 0), FLDP(         0, 0), width); /* update window:  current line */
+            for (i = 0; i < height; i++) {
+                for (j = 0; j < width; j++)
+                    if (FLDV(i, j) == 0 || FLDV(i, j) == gens) {
+                        ulong cnt = 0;
+
+                        size_t jl = j > 0 ? j - 1 : width - 1;
+                        size_t jr = j < width - 1 ? j + 1 : 0;
+                        size_t ip = height + 1;
+                        size_t ic = height + 2;
+                        size_t in = i + 1;
+
+                        cnt += FLDV(ip, jl) == gens; cnt += FLDV(ip, j) == gens; cnt += FLDV(ip, jr) == gens;
+                        cnt += FLDV(ic, jl) == gens;                             cnt += FLDV(ic, jr) == gens;
+                        cnt += FLDV(in, jl) == gens; cnt += FLDV(in, j) == gens; cnt += FLDV(in, jr) == gens;
+
+                        if (FLDV(ic, j) == gens)
+                            FLDV(i, j) -= ((bsmask & (1ul << (cnt + 9))) == 0);
+                        else if (bsmask & (1ul << cnt))
+                            FLDV(i, j) = gens;
+                    } else
+                        FLDV(i, j) -= 1;
+                memcpy(FLDP(height + 1, 0), FLDP(height + 2, 0), width); /* move current line to previous */
+                memcpy(FLDP(height + 2, 0), FLDP(     i + 1, 0), width); /* copy next line into current */
+            }
+        }
+
+        /* Update screen */
+        fflush(stdout); sleep_ms(DELAY_IN_MILLISECOND);
+    }
+
+    fputs(ESC"?25h", stdout); /* show cursor */
+
+    rc = EXIT_SUCCESS;
+error:
+    for (i = 0; i < COUNT_TEMPLATE_SLOT; i++)
+        free(template_slots[i].array);
+    free(field);
+    free(saved_field);
+    free(bitset);
+    return rc;
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                      Implementation support functions                     *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+float randf0t1(void) { return (float)rand() / (float)RAND_MAX; }
+
+uchar randrange(uchar max) { return rand() % (max + 1); }
+
+ulong parse_rule(const char* str, uchar* gens) {
+    ulong mask = 0, digit, number;
+
+    /* Parsing birth digits */
+    if (*str != 'B' && *str != 'b')
+        error_msgf("expected start birth number, but got '%c'", *str);
+    else ++str;
+
+    for (; *str != '/' && *str != '\0'; ++str) {
+        if (*str < '0' || *str > '8')
+            error_msgf("expected digit less than 9, but got '%c'", *str);
+        digit = *str - '0';
+        if ((mask >> digit) & 1)
+            error_msgf("'%c' already set", *str);
+        mask |= 1ul << digit;
+    }
+
+    if (*str != '/')
+        error_msgf("expected rule delimiter, but got '%c'", *str);
+    else ++str;
+
+    /* Parsing survive digits */
+    if (*str != 'S' && *str != 's')
+        error_msgf("expected start survive number, but got '%c'", *str);
+    else ++str;
+
+    for (; *str != '/' && *str != '\0'; ++str) {
+        if (*str < '0' || *str > '8')
+            error_msgf("expected digit less than 9, but got '%c'", *str);
+        digit = *str - '0';
+        if ((mask >> (digit + 9)) & 1)
+            error_msgf("'%c' already set", *str);
+        mask |= 1ul << (digit + 9);
+    }
+
+    /* Parsing count generations */
+    if (*str != '/' && *str != '\0')
+        error_msgf("expected rule delimiter or end, but got '%c'", *str);
+    else if (*str == '/') {
+        ++str;
+        if (*str != 'G' && *str != 'g')
+            error_msgf("expected start generation count, but got '%c'", *str);
+        ++str;
+        for (number = 0; *str != '\0'; ++str) {
+            if (*str < '0' || *str > '9')
+                error_msgf("expected digit, but got '%c'", *str);
+            number = number * 10 + *str - '0';
+        }
+        if (number < 2 || number > 256)
+            error_msg("generation count too high or low");
+        *gens = number - 1;
+    } else
+        *gens = 1; /* i.e. 2 states */
+
+    return mask;
+error:
+    return INVALID_BS_MASK;
+}
+
+void normalization_rule(char* rule, ulong mask, uchar gens) {
+    int i;
+
+    *rule++ = 'B';
+    for (i = 0; i < 9; i++, mask >>= 1)
+        if (mask & 1) *rule++ = '0' + i;
+
+    *rule++ = '/';
+    *rule++ = 'S';
+    for (i = 0; i < 9; i++, mask >>= 1)
+        if (mask & 1) *rule++ = '0' + i;
+
+    if (gens > 1)
+        sprintf(rule, "/G%i", (int)gens + 1);
+    else
+        *rule = '\0';
+}
+
+static int decode_rle(template_t* tmpl, ulong* x, ulong* y, const char* line, uchar gens) {
+    char* end; ulong len, gen;
+    for (; *line != '\n'; line++) {
+        len = strtoul(line, &end, 10);
+        if (end != line) {
+            if (len == 0) error_msg("zero count for tag in RLE");
+            line = end;
+        } else
+            len = 1;
+
+        while (*line == ' ' || *line == '\t') ++line;
+
+        if (*line == '.') {
+            gen = strtoul(++line, &end, 10);
+            if (end != line) {
+                if (gen == 0) error_msg("zero value for generation of tag in RLE");
+                if (gen > gens) error_msg("too high value for generation of tag");
+                line = end;
+            } else
+                error_msg("no value for generation of tag");
+        } else
+            gen = 0;
+
+        while (*line == ' ' || *line == '\t') ++line;
+
+        switch (*line) {
+            case 'b': case 'o':
+                if (gen) error_msg("genaration value for tag 'b' and 'o'");
+                if (*x + len > tmpl->width)
+                    error_msg("the tag count is too high");
+                memset(tmpl->array + tmpl->width * *y + *x,
+                    *line == 'o' ? gens : 0, len); *x += len;
+            break;
+
+            case 'g':
+                if (!gen) error_msg("zero value of genaration value in tag 'g'");
+                if (*x + len > tmpl->width)
+                    error_msg("the tag count is too high");
+                memset(tmpl->array + tmpl->width * *y + *x, gen, len); *x += len;
+            break;
+
+            case '$':
+                if (*y + len > tmpl->height)
+                    error_msg("the tag count is too high");
+                *y += len; *x = 0;
+            break;
+
+            case '!':
+                if (line[1] != '\0')
+                    error_msgf("expect end of RLE, but got '%c'", line[1]);
+                return 0;
+
+            case '\0': error_msg("unexpected end of RLE");
+            default: error_msgf("unexpected tag '%c' in RLE", *line);
+        }
+    }
+
+    return +1;
+error:
+    return -1;
+}
+
+static template_t parse_rle_file(const char* path, uchar gens, ulong width, ulong height) {
+    template_t new = {0}; ulong x = 0, y = 0;
+    FILE* file; char line[256]; int scanned;
+
+    file = fopen(path, "r");
+    if (!file) error_msgf("couldn't open file '%s'", path);
+
+    while (fgets(line, sizeof line, file))
+        if (line[0] == '#') {
+            if (strrchr(line, '\n') == NULL)
+                error_msg("very long comment line");
+            continue;
+        } else
+            break;
+
+    scanned = sscanf(line, "x = %lu , y = %lu , "
+        "rule = %*"stringify(MAX_RULE_LENGTH)"s", &new.width, &new.height);
+    if (scanned != 2) error_msg("couldn't read x-y-rule info");
+
+    if (new.width  == 0 || new.width  > width)
+        error_msg("incorrect value for template width");
+    if (new.height == 0 || new.height > height)
+        error_msg("incorrect value for template height");
+
+    new.array = malloc(new.width * new.height);
+    if (!new.array) error_msg("couldn't allocate memory");
+    memset(new.array, 0, new.width * new.height);
+
+    while (fgets(line, sizeof line, file)) {
+        int rc = decode_rle(&new, &x, &y, line, gens);
+        if (rc == 0) goto exit;
+        if (rc <  0) goto error;
+    }
+    error_msg("unexpected end of file");
+
+exit:
+    fclose(file);
+    return new;
+error:
+    free(new.array);
+    memset(&new, 0, sizeof new);
+    if (file) fclose(file);
+    return new;
+}
+
+template_t parse_rle(const char* rle, uchar gens, ulong width, ulong height) {
+    template_t new = {0}; char* end; ulong x = 0, y = 0; int rc;
+
+    /* "@./rle/pattern.rle" -> parse("./rle/pattern.rle") */
+    if (rle[0] == '@') return parse_rle_file(rle + 1, gens, width, height);
+
+    new.width = strtoul(rle, &end, 10);
+    if (*end != ':') error_msgf("unexpected character '%c' after width", *end);
+    new.height = strtoul(end + 1, &end, 10);
+    if (*end != ':') error_msgf("unexpected character '%c' after height", *end);
+
+    if (new.width  == 0 || new.width > width)
+        error_msg("incorrect value for template width");
+    if (new.height == 0 || new.height > height)
+        error_msg("incorrect value for template height");
+
+    new.array = malloc(new.width * new.height);
+    if (!new.array) error_msg("couldn't allocate memory");
+    memset(new.array, 0, new.width * new.height);
+
+    rc = decode_rle(&new, &x, &y, end + 1, gens);
+    if (rc < 0) goto error;
+    if (rc > 0) error_msg("multiline RLE in console line");
+
+    return new;
+error:
+    free(new.array);
+    memset(&new, 0, sizeof new);
+    return new;
+}
+
+void draw_border(ulong w, ulong h) {
+    ulong i;
+
+    fputs(ESC"H" , stdout); /* move to start */
+    fputs(ESC"2J", stdout); /* clear screen */
+
+    fputs(LU_CORNER, stdout);
+    for (i = w; i > 0; i -= min(i, MIN_FIELD_WIDTH))
+        fwrite(HOR_BAR_LINE, min(i, MIN_FIELD_WIDTH) * strlitlen(HOR_BAR), 1, stdout);
+    fputs(RU_CORNER"\n", stdout);
+
+    for (i = 0; i < h; i++)
+        printf(VER_BAR ESC"%luC" VER_BAR "\n", w);
+
+    fputs(LD_CORNER, stdout);
+    for (i = w; i > 0; i -= min(i, MIN_FIELD_WIDTH))
+        fwrite(HOR_BAR_LINE, min(i, MIN_FIELD_WIDTH) * strlitlen(HOR_BAR), 1, stdout);
+    fputs(RD_CORNER, stdout);
+}
+
+void move_to_up(uchar* field, size_t width, size_t heigth) {
+    memmove(field + width, field, width * heigth);
+    memcpy(field, field + width * heigth, width);
+}
+
+void move_to_down(uchar* field, size_t width, size_t heigth) {
+    memcpy(field + width * heigth, field, width);
+    memmove(field, field + width, width * heigth);
+}
+
+void move_to_left(uchar* field, size_t width, size_t heigth) {
+    size_t i; for (i = 0; i < heigth; i++) {
+        uchar right = field[width * i + width - 1];
+        memmove(field + width * i + 1, field + width * i, width - 1);
+        field[width * i] = right;
+    }
+}
+
+void move_to_right(uchar* field, size_t width, size_t heigth) {
+    size_t i; for (i = 0; i < heigth; i++) {
+        uchar left = field[width * i];
+        memmove(field + width * i, field + width * i + 1, width - 1);
+        field[width * i + width - 1] = left;
+    }
+}
+
+void move_to_up_by_3(uchar* field, size_t width, size_t heigth) {
+    memmove(field + width * 3, field, width * heigth);
+    memcpy(field, field + width * heigth, width * 3);
+}
+
+void move_to_down_by_3(uchar* field, size_t width, size_t heigth) {
+    memcpy(field + width * heigth, field, width * 3);
+    memmove(field, field + width * 3, width * heigth);
+}
+
+void move_to_left_by_10(uchar* field, size_t width, size_t heigth) {
+    size_t i; for (i = 0; i < heigth; i++) {
+        uchar right[10]; memcpy(right, field + width * i + width - 10, 10);
+        memmove(field + width * i + 10, field + width * i, width - 10);
+        memcpy(field + width * i, right, 10);
+    }
+}
+
+void move_to_right_by_10(uchar* field, size_t width, size_t heigth) {
+    size_t i; for (i = 0; i < heigth; i++) {
+        uchar left[10]; memcpy(left, field + width * i, 10);
+        memmove(field + width * i, field + width * i + 10, width - 10);
+        memcpy(field + width * i + width - 10, left, 10);
+    }
+}
+
+void flip_horizontally(template_t* tmpl) {
+    size_t i; for (i = 0; i < tmpl->height; i++) {
+        uchar* first = tmpl->array + tmpl->width * i;
+        uchar* last  = tmpl->array + tmpl->width * (i + 1) - 1;
+        for (; first < last; first++, last--) {
+            uchar t = *first; *first = *last; *last = t;
+        }
+    }
+}
+
+void flip_vertically(template_t* tmpl) {
+    uchar* first = tmpl->array;
+    uchar* last  = tmpl->array + tmpl->width * (tmpl->height - 1);
+    for (; first < last; first += tmpl->width, last -= tmpl->width) {
+        size_t i; uchar t;
+        for (i = 0; i < tmpl->width; i++) {
+            t = first[i]; first[i] = last[i]; last[i] = t;
+        }
+    }
+}
+
+void rotate_by_180deg(template_t* tmpl) {
+    size_t i, N = tmpl->width * tmpl->height;
+    for (i = 0; i < N / 2; i++) {
+        uchar t = tmpl->array[i];
+        tmpl->array[i] = tmpl->array[N - i - 1];
+        tmpl->array[N - i - 1] = t;
+    }
+}
+
+void transpose(template_t* tmpl, bit32_t* bitset) {
+    ulong temp, i, j;
+    if (tmpl->width == 1 || tmpl->height == 1) {
+        temp = tmpl->width;
+        tmpl->width = tmpl->height;
+        tmpl->height = temp;
+    } else if (tmpl->width == tmpl->height) {
+        for (i = 0; i < tmpl->width; i++)
+        for (j = i + 1; j < tmpl->width; j++) {
+            temp = tmpl->array[tmpl->width * i + j];
+            tmpl->array[tmpl->width * i + j] = tmpl->array[tmpl->width * j + i];
+            tmpl->array[tmpl->width * j + i] = temp;
+        }
+    } else {
+        /* Algorithm: https://stackoverflow.com/a/9320349*/
+        const ulong size = tmpl->width * tmpl->height;
+        const ulong sizem1 = size - 1;
+        ulong cycle = 0;
+        memset(bitset, 0, countbit32(size) * sizeof *bitset);
+        while (++cycle != size) {
+            i = cycle;
+            if (bit32_get(bitset, i)) continue;
+            do {
+                i = i == sizem1 ? sizem1 : (tmpl->height * i) % sizem1;
+                temp = tmpl->array[i];
+                tmpl->array[i] = tmpl->array[cycle];
+                tmpl->array[cycle] = temp;
+                bit32_set(bitset, i);
+            } while (i != cycle);
+        }
+        temp = tmpl->width;
+        tmpl->width = tmpl->height;
+        tmpl->height = temp;
+    }
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                           OS dependent functions                          *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#if defined(_WIN32)
+
+#include <windows.h>
+#include <conio.h>
+
+static char output_buffer[8 * 1024];
+
+void setup_terminal(void) {
+    setvbuf(stdout, output_buffer, _IOFBF, sizeof output_buffer);
+}
+
+bool get_console_size(ulong* width, ulong* height) {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    int ret = GetConsoleScreenBufferInfo(
+        GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+    if (ret) {
+        * width = csbi.dwSize.X;
+        *height = csbi.dwSize.Y;
+        return true;
+    } else
+        return false;
+}
+
+void sleep_ms(ulong ms) { Sleep(ms); }
+
+bool is_symbol_received(void) { return kbhit(); }
+
+int received_symbol(void) { return getch(); }
+
+#elif defined(__linux__)
+#include <sys/ioctl.h>
+#include <termios.h>
+#include <unistd.h>
+
+/* Terminal setup: https://stackoverflow.com/a/63708756 */
+
+static struct termios orig_termios;
+static struct termios  new_termios;
+static int peek_char = -1;
+
+void reset_terminal(void) {
+    tcsetattr(0, TCSANOW, &orig_termios);
+}
+
+void setup_terminal(void) {
+    atexit(reset_terminal);
+
+    tcgetattr(0, &orig_termios);
+    new_termios = orig_termios;
+    new_termios.c_lflag &= ~ICANON;
+    new_termios.c_lflag &= ~ECHO;
+    new_termios.c_lflag &= ~ISIG;
+    new_termios.c_cc[VMIN] = 1;
+    new_termios.c_cc[VTIME] = 0;
+    tcsetattr(0, TCSANOW, &new_termios);
+}
+
+bool get_console_size(ulong* width, ulong* height) {
+    struct winsize ws;
+    if (!ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws)) {
+        * width = ws.ws_col;
+        *height = ws.ws_row;
+        return true;
+    } else
+        return false;
+}
+
+void sleep_ms(ulong ms) { usleep(ms * 1000); }
+
+bool is_symbol_received(void) {
+    int n; unsigned char ch;
+
+    if (peek_char >= 0) return true;
+
+    new_termios.c_cc[VMIN] = 0;
+    tcsetattr(0, TCSANOW, &new_termios);
+    n = read(0, &ch, 1);
+    new_termios.c_cc[VMIN] = 1;
+    tcsetattr(0, TCSANOW, &new_termios);
+
+    if (n == 1) {
+        peek_char = ch;
+        return true;
+    } else
+        return false;
+}
+
+int received_symbol(void) {
+    char ch;
+    if (peek_char >= 0) {
+        ch = peek_char;
+        peek_char = -1;
+    } else
+        read(0, &ch, 1);
+    return ch;
+}
+
+#else
+#  error Unsupported operation system
+#endif
