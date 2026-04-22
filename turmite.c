@@ -84,23 +84,21 @@ typedef unsigned bit32_t;
 #define  DEAD_CURSOR_BLOCK DEAD_CURSOR DEAD_CURSOR
 #define ALIVE_CURSOR_BLOCK ALIVE_CURSOR ALIVE_CURSOR
 
-#define MIN_FIELD_WIDTH  22
+#define MIN_FIELD_WIDTH  14
 #define MIN_FIELD_HEIGHT 1
 #define MAX_FIELD_WIDTH  1000
 #define MAX_FIELD_HEIGHT 1000
 
-#define DEFAULT_RULE   "B3/S23"
-#define DEFAULT_PROB   50
+#define DEFAULT_TABLE  "1R0,0L0"
+#define DEFAULT_PROB   0
 #define DEFAULT_WIDTH  50
 #define DEFAULT_HEIGHT 25
 #define DEFAULT_INDENT 0
 
-#define INVALID_BS_MASK (-1ul)
-
-#define FRAMES_REP_SECOND    60 /* frame ~ one simulation step */
+#define FRAMES_REP_SECOND    500 /* frame ~ one simulation step */
 #define DELAY_IN_MILLISECOND (1000 / FRAMES_REP_SECOND)
 
-#define MAX_RULE_LENGTH     26
+#define COUNT_TURMITE_SLOT  16
 #define COUNT_TEMPLATE_SLOT 10
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -377,14 +375,12 @@ typedef unsigned bit32_t;
 #define HOR_BAR_LINE \
     HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
     HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
-    HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
-    HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
-    HOR_BAR HOR_BAR HOR_BAR HOR_BAR
+    HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR
 
-/* Maximum min-width case  * * * * * * * * * * * *
- * -< B012345678/S012345678/G256 | DDxDD/99% >-  *
- * * * * * * * * * * * * * * * * * * * * * * * * */
-#define INFOFMT " %s " VER_BAR " %lux%lu/%lu%% "
+/* Maximum min-width case  * * * *
+ * -< C256/S256 | DDxDD/100% >-  *
+ * * * * * * * * * * * * * * * * */
+#define INFOFMT " C%lu/S%lu " VER_BAR " %lux%lu/%lu%% "
 
 #define MODE_TXT_SIMULATION "SIMULATION"
 #define MODE_TXT_PAUSE      "PAUSE"
@@ -423,7 +419,6 @@ static_assert(strlitlen(MODE_TXT_RECTANGLE ) + 6 <= 2 * MIN_FIELD_WIDTH);
 static_assert(strlitlen(MODE_TXT_TEMPLATE  ) + 5 <= 2 * MIN_FIELD_WIDTH);
 static_assert(strlitlen(MODE_TXT_CLIPBOARD ) + 6 <= 2 * MIN_FIELD_WIDTH);
 
-static_assert(strlitlen(DEFAULT_RULE) <= MAX_RULE_LENGTH);
 static_assert(MIN_FIELD_WIDTH  <= DEFAULT_WIDTH  && DEFAULT_WIDTH  <= MAX_FIELD_WIDTH );
 static_assert(MIN_FIELD_HEIGHT <= DEFAULT_HEIGHT && DEFAULT_HEIGHT <= MAX_FIELD_HEIGHT);
 static_assert(DEFAULT_INDENT <= DEFAULT_WIDTH  / 2);
@@ -433,23 +428,34 @@ static_assert(DEFAULT_INDENT <= DEFAULT_HEIGHT / 2);
  *                         Main and support functions                        *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-/* Rule bit interpretation * * * * * *
- * Example rule B368/S245 (Morley)   *
- *    bit index :        1         0 *
- *                765432109876543210 *
- *   birth bits :          101001000 *
- * survive bits : 000110100          *
- * bsmask (hex) =               6948 *
- * * * * * * * * * * * * * * * * * * */
+/* State-color table * * * * * * * * * * * * * * * * * *
+ * input: xxx,yyy,;aaa,,ccc;,fff,                      *
+ * interpretation:                                     *
+ *       -- colors ->                                  *
+ * s      0   1   2  ...                               *
+ * t  0  xxx yyy                                       *
+ * a  1  aaa     ccc                                   *
+ * t  2      fff                                       *
+ * e ...                                               *
+ * s                                                   *
+ *                                                     *
+ * cell is:                                            *
+ * 1. new color                                        *
+ * 2. new direction or turn                            *
+ * 3. new state                                        *
+ *                                                     *
+ * F - forward | B - backward | L - left | R - right   *
+ * N - North   | S - South    | W - west | E - east    *
+ *                                                     *
+ * 1R3 -> set color 1, turn right, set state 3         *
+ * 2W0 -> set color 2, set west direction, set state 0 *
+ *                                                     *
+ * if not found new color-state, tumite would die      *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-typedef unsigned char uchar;
-typedef unsigned long ulong;
-
-typedef struct {
-    uchar* array;
-    ulong  width;
-    ulong height;
-} template_t;
+typedef unsigned char  uchar ;
+typedef unsigned short ushort;
+typedef unsigned long  ulong ;
 
 typedef enum {
     MODE_SIMULATION = 0,
@@ -471,14 +477,46 @@ typedef enum {
     MODE_CLIPBOARD
 } mode_action_t;
 
+typedef enum {
+    DIR_NORTH = 0,
+    DIR_EAST,
+    DIR_SOUTH,
+    DIR_WEST,
+
+    DIR_FORWARD,
+    DIR_RIGHT,
+    DIR_BACKWARD,
+    DIR_LEFT
+} turmite_dir_t;
+
+typedef struct {
+    ushort x, y;
+    uchar state;
+    uchar dir;
+    bool alive;
+} turmite_t;
+
+typedef struct {
+    uchar old_clr, old_stt;
+    uchar new_clr, new_stt;
+    turmite_dir_t dir;
+} turmite_step_t;
+
+typedef struct {
+    uchar* array;
+    ulong  width;
+    ulong height;
+} template_t;
+
 static char state_colors[256][16] = {0};
+
+int cmp_turmite_step(const void* lhs, const void* rhs);
 
 float randf0t1(void);
 uchar randrange(uchar max);
 
-ulong parse_rule(const char* str, uchar* gens);
+turmite_step_t* parse_table(const char* table, ulong* count, ulong* colors, ulong* states);
 template_t parse_rle(const char* rle, uchar gens, ulong width, ulong height);
-void normalization_rule(char* rule, ulong mask, uchar gens);
 
 void draw_border(ulong w, ulong h);
 
@@ -487,8 +525,8 @@ void move_to_down (uchar* field, size_t width, size_t heigth);
 void move_to_left (uchar* field, size_t width, size_t heigth);
 void move_to_right(uchar* field, size_t width, size_t heigth);
 
-void move_to_up_by_3    (uchar* field, size_t width, size_t heigth);
-void move_to_down_by_3  (uchar* field, size_t width, size_t heigth);
+void move_to_up_by_5    (uchar* field, size_t width, size_t heigth);
+void move_to_down_by_5  (uchar* field, size_t width, size_t heigth);
 void move_to_left_by_10 (uchar* field, size_t width, size_t heigth);
 void move_to_right_by_10(uchar* field, size_t width, size_t heigth);
 
@@ -504,12 +542,11 @@ bool is_symbol_received(void);
 int received_symbol(void);
 
 int main(int argc, char** argv) {
-    size_t i, j; ulong prob_int;
-    int rc = EXIT_FAILURE;
+    ulong prob_int, tm_clrs, tm_stts;
+    size_t i, j; int rc = EXIT_FAILURE;
 
     /* Parameters of simulation */
-    ulong width, height, indent, bsmask;
-    char rule[MAX_RULE_LENGTH + 1];
+    ulong width, height, indent;
     float prob; uchar gens, brush;
 
     bool full_alive_only = false;
@@ -522,8 +559,15 @@ int main(int argc, char** argv) {
     /* Program mode, aka state */
     mode_action_t mode = MODE_SIMULATION;
 
+    /* Slots with turmites */
+    turmite_t turmite_slots[COUNT_TURMITE_SLOT] = {0};
+
     /* Slots with pattern for paste */
     template_t template_slots[COUNT_TEMPLATE_SLOT] = {0};
+
+    /* Array with transition statements */
+    turmite_step_t* step_table = NULL;
+    ulong step_table_count;
 
     /* Bitset for use in transpose */
     bit32_t* bitset = NULL;
@@ -535,8 +579,8 @@ int main(int argc, char** argv) {
 #define FLDP(i, j) (field + width * (i) + (j))
 
     /* Flag parsed options */
-    bool   rule_is_set = false;
     bool   prob_is_set = false;
+    bool  table_is_set = false;
     bool  width_is_set = false;
     bool height_is_set = false;
     bool indent_is_set = false;
@@ -598,21 +642,21 @@ int main(int argc, char** argv) {
                 error_msg("incorrect value for height");
 
             unshift_arg();
-        } else if (strcmp(opt, "-r") == 0 || strcmp(opt, "--rule") == 0) {
+        } else if (strcmp(opt, "-t") == 0 || strcmp(opt, "--table") == 0) {
             if (!arg) error_msg("not enough arguments for option");
-            if (rule_is_set) error_msg("rule value has already been set");
-            rule_is_set = true;
+            if (table_is_set) error_msg("table has already been set");
+            table_is_set = true;
 
-            bsmask = parse_rule(arg, &gens);
-            if (bsmask == INVALID_BS_MASK) goto error;
-            normalization_rule(rule, bsmask, gens);
+            step_table = parse_table(arg, &step_table_count, &tm_clrs, &tm_stts);
+            if (!step_table) goto error;
+            gens = tm_clrs - 1;
         } else if (strcmp(opt, "-p") == 0 || strcmp(opt, "--probability") == 0) {
             if (!arg) error_msg("not enough arguments for option");
             if (prob_is_set) error_msg("probability value has already been set");
             prob_is_set = true;
 
             prob_int = strtoul(arg, &end, 10);
-            if (*end != '\0' || prob_int < 1 || prob_int > 99)
+            if (*end != '\0' || prob_int > 100)
                 error_msg("incorrect value for probability");
         } else if (strcmp(opt, "-w") == 0 || strcmp(opt, "--width") == 0) {
             if (!arg) error_msg("not enough arguments for option");
@@ -676,9 +720,10 @@ int main(int argc, char** argv) {
     if (! width_is_set) width    = DEFAULT_WIDTH;
     if (!height_is_set) height   = DEFAULT_HEIGHT;
     if (!indent_is_set) indent   = DEFAULT_INDENT;
-    if (!  rule_is_set) {
-        bsmask = parse_rule(DEFAULT_RULE, &gens);
-        strcpy(rule, DEFAULT_RULE);
+    if (! table_is_set) {
+        step_table = parse_table(DEFAULT_TABLE, &step_table_count, &tm_clrs, &tm_stts);
+        if (!step_table) goto error;
+        gens = tm_clrs - 1;
     }
 
     prob = (float)prob_int / 100.f;
@@ -701,8 +746,8 @@ int main(int argc, char** argv) {
     }
 
     /* Allocation memory for field */
-    /* additional lines for moving of field and correct updating */
-    field = malloc(width * (height + 3));
+    /* additional lines for moving of field */
+    field = malloc(width * (height + 5));
     if (!field) error_msg("couldn't allocate memory");
     saved_field = malloc(width * height);
     if (!saved_field) error_msg("couldn't allocate memory");
@@ -719,10 +764,19 @@ int main(int argc, char** argv) {
     /* Drawing border and information on screen */
     draw_border(width * 2, height);
     fputs(ESC"3G" LVER_BAR" "MODE_TXT_SIMULATION" "RVER_BAR, stdout);
-    printf(ESC"1;3H" LVER_BAR INFOFMT RVER_BAR, rule, width, height, prob_int);
+    printf(ESC"1;3H" LVER_BAR INFOFMT RVER_BAR, tm_clrs, tm_stts, width, height, prob_int);
 
     srand(time(NULL));
 restart: /* Initialization of fields */
+
+    /**********************************************************/
+    turmite_slots[0].alive = true;
+    turmite_slots[0].dir = DIR_NORTH;
+    turmite_slots[0].state = 0;
+    turmite_slots[0].x = width / 2;
+    turmite_slots[0].y = height / 2;
+    /**********************************************************/
+
     if (field_is_saved)
         memcpy(field, saved_field, width * height);
     else {
@@ -818,16 +872,12 @@ restart: /* Initialization of fields */
                         case 'd': move_to_right(field, width, height); break;
 
                         case 'W':
-                            move_to_up_by_3(field, width, height);
-                            move_to_up_by_3(field, width, height);
-                            move_to_up_by_3(field, width, height);
-                            move_to_up     (field, width, height);
+                            move_to_up_by_5(field, width, height);
+                            move_to_up_by_5(field, width, height);
                             break;
                         case 'S':
-                            move_to_down_by_3(field, width, height);
-                            move_to_down_by_3(field, width, height);
-                            move_to_down_by_3(field, width, height);
-                            move_to_down     (field, width, height);
+                            move_to_down_by_5(field, width, height);
+                            move_to_down_by_5(field, width, height);
                             break;
                         case 'A': move_to_left_by_10 (field, width, height); break;
                         case 'D': move_to_right_by_10(field, width, height); break;
@@ -994,32 +1044,27 @@ restart: /* Initialization of fields */
 
         /* Update current field */
         if (mode == MODE_SIMULATION || mode == MODE_ONESTEP) {
-            memcpy(FLDP(height + 0, 0), FLDP(         0, 0), width); /* save first line after last */
-            memcpy(FLDP(height + 1, 0), FLDP(height - 1, 0), width); /* update window: previous line */
-            memcpy(FLDP(height + 2, 0), FLDP(         0, 0), width); /* update window:  current line */
-            for (i = 0; i < height; i++) {
-                for (j = 0; j < width; j++)
-                    if (FLDV(i, j) == 0 || FLDV(i, j) == gens) {
-                        ulong cnt = 0;
+            turmite_t* tm = turmite_slots;
+            turmite_step_t step, *ptr;
+            for (; tm < turmite_slots + COUNT_TURMITE_SLOT; tm++) if (tm->alive) {
+                step.old_clr = FLDV(tm->y, tm->x);
+                step.old_stt = tm->state;
+                ptr = bsearch(&step, step_table, step_table_count, sizeof step, cmp_turmite_step);
+                if (!ptr) { tm->alive = false; continue; } else step = *ptr;
 
-                        size_t jl = j > 0 ? j - 1 : width - 1;
-                        size_t jr = j < width - 1 ? j + 1 : 0;
-                        size_t ip = height + 1;
-                        size_t ic = height + 2;
-                        size_t in = i + 1;
+                FLDV(tm->y, tm->x) = step.new_clr;
+                tm->state = step.new_stt;
+                if (step.dir < DIR_FORWARD)
+                    tm->dir = step.dir;
+                else
+                    tm->dir = (tm->dir + step.dir) & 3;
 
-                        cnt += FLDV(ip, jl) == gens; cnt += FLDV(ip, j) == gens; cnt += FLDV(ip, jr) == gens;
-                        cnt += FLDV(ic, jl) == gens;                             cnt += FLDV(ic, jr) == gens;
-                        cnt += FLDV(in, jl) == gens; cnt += FLDV(in, j) == gens; cnt += FLDV(in, jr) == gens;
-
-                        if (FLDV(ic, j) == gens)
-                            FLDV(i, j) -= ((bsmask & (1ul << (cnt + 9))) == 0);
-                        else if (bsmask & (1ul << cnt))
-                            FLDV(i, j) = gens;
-                    } else
-                        FLDV(i, j) -= 1;
-                memcpy(FLDP(height + 1, 0), FLDP(height + 2, 0), width); /* move current line to previous */
-                memcpy(FLDP(height + 2, 0), FLDP(     i + 1, 0), width); /* copy next line into current */
+                switch (tm->dir) {
+                    case DIR_NORTH: tm->y = (tm->y == 0 ? height : tm->y)    - 1; break;
+                    case DIR_SOUTH: tm->y =  tm->y == height - 1 ? 0 : tm->y + 1; break;
+                    case DIR_WEST : tm->x = (tm->x == 0 ? width  : tm->x)    - 1; break;
+                    case DIR_EAST : tm->x =  tm->x == width  - 1 ? 0 : tm->x + 1; break;
+                }
             }
         }
 
@@ -1035,6 +1080,7 @@ error:
         free(template_slots[i].array);
     free(field);
     free(saved_field);
+    free(step_table);
     free(bitset);
     return rc;
 }
@@ -1043,85 +1089,114 @@ error:
  *                      Implementation support functions                     *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+int cmp_turmite_step(const void* lhs, const void* rhs) {
+    const turmite_step_t *l = lhs, *r = rhs;
+    int cmp = (l->old_stt > r->old_stt) - (l->old_stt < r->old_stt);
+    if (cmp == 0)
+        return (l->old_clr > r->old_clr) - (l->old_clr < r->old_clr);
+    return cmp;
+}
+
 float randf0t1(void) { return (float)rand() / (float)RAND_MAX; }
 
 uchar randrange(uchar max) { return rand() % (max + 1); }
 
-ulong parse_rule(const char* str, uchar* gens) {
-    ulong mask = 0, digit, number;
+static turmite_step_t* expand_table(turmite_step_t* ptr, ulong* cap) {
+    turmite_step_t* new;
+    *cap = *cap ? (*cap * 207 + 127) / 128 : 8;
 
-    /* Parsing birth digits */
-    if (*str != 'B' && *str != 'b')
-        error_msgf("expected start birth number, but got '%c'", *str);
-    else ++str;
+    new = realloc(ptr, *cap * sizeof *new);
+    if (!new) error_msg("couldn't expand table-list");
 
-    for (; *str != '/' && *str != '\0'; ++str) {
-        if (*str < '0' || *str > '8')
-            error_msgf("expected digit less than 9, but got '%c'", *str);
-        digit = *str - '0';
-        if ((mask >> digit) & 1)
-            error_msgf("'%c' already set", *str);
-        mask |= 1ul << digit;
-    }
-
-    if (*str != '/')
-        error_msgf("expected rule delimiter, but got '%c'", *str);
-    else ++str;
-
-    /* Parsing survive digits */
-    if (*str != 'S' && *str != 's')
-        error_msgf("expected start survive number, but got '%c'", *str);
-    else ++str;
-
-    for (; *str != '/' && *str != '\0'; ++str) {
-        if (*str < '0' || *str > '8')
-            error_msgf("expected digit less than 9, but got '%c'", *str);
-        digit = *str - '0';
-        if ((mask >> (digit + 9)) & 1)
-            error_msgf("'%c' already set", *str);
-        mask |= 1ul << (digit + 9);
-    }
-
-    /* Parsing count generations */
-    if (*str != '/' && *str != '\0')
-        error_msgf("expected rule delimiter or end, but got '%c'", *str);
-    else if (*str == '/') {
-        ++str;
-        if (*str != 'G' && *str != 'g')
-            error_msgf("expected start generation count, but got '%c'", *str);
-        ++str;
-        for (number = 0; *str != '\0'; ++str) {
-            if (*str < '0' || *str > '9')
-                error_msgf("expected digit, but got '%c'", *str);
-            number = number * 10 + *str - '0';
-        }
-        if (number < 2 || number > 256)
-            error_msg("generation count too high or low");
-        *gens = number - 1;
-    } else
-        *gens = 1; /* i.e. 2 states */
-
-    return mask;
+    return new;
 error:
-    return INVALID_BS_MASK;
+    return NULL;
 }
 
-void normalization_rule(char* rule, ulong mask, uchar gens) {
-    int i;
+turmite_step_t* parse_table(const char* table, ulong* count, ulong* colors, ulong* states) {
+    ushort max_c = 0, max_s = 0, cur_c = 0, cur_s = 0;
+    ushort parsed; bool first_row_parsed = false;
 
-    *rule++ = 'B';
-    for (i = 0; i < 9; i++, mask >>= 1)
-        if (mask & 1) *rule++ = '0' + i;
+    ulong res_cnt = 0, res_cap = 0;
+    turmite_step_t* result = NULL;
+    turmite_step_t cur_step, *tmp;
 
-    *rule++ = '/';
-    *rule++ = 'S';
-    for (i = 0; i < 9; i++, mask >>= 1)
-        if (mask & 1) *rule++ = '0' + i;
+    do {
+        if (cur_c > 255) error_msg("too many colors in row");
+        memset(&cur_step, 0, sizeof cur_step);
 
-    if (gens > 1)
-        sprintf(rule, "/G%i", (int)gens + 1);
-    else
-        *rule = '\0';
+        while (isspace(*table)) ++table;
+        if (*table == ',' || *table == ';' || *table == '\0')
+            goto no_step;
+
+        for (parsed = 0; isdigit(*table); table++)
+            parsed = 10 * parsed + (*table - '0');
+        if (parsed > 255) error_msg("too many value for color in table");
+        cur_step.new_clr = parsed;
+        while (isspace(*table)) ++table;
+
+        switch (*table++) {
+            case 'N': case 'n': cur_step.dir = DIR_NORTH; break;
+            case 'E': case 'e': cur_step.dir = DIR_EAST ; break;
+            case 'S': case 's': cur_step.dir = DIR_SOUTH; break;
+            case 'W': case 'w': cur_step.dir = DIR_WEST ; break;
+
+            case 'F': case 'f': cur_step.dir = DIR_FORWARD ; break;
+            case 'R': case 'r': cur_step.dir = DIR_RIGHT   ; break;
+            case 'B': case 'b': cur_step.dir = DIR_BACKWARD; break;
+            case 'L': case 'l': cur_step.dir = DIR_LEFT    ; break;
+
+            default: error_msgf("unexpected direction '%c' in table", table[-1]);
+        }
+        while (isspace(*table)) ++table;
+
+        for (parsed = 0; isdigit(*table); table++)
+            parsed = 10 * parsed + (*table - '0');
+        if (parsed > 255) error_msg("too many value for color in table");
+        cur_step.new_stt = parsed;
+        while (isspace(*table)) ++table;
+
+        if (res_cnt >= res_cap) {
+            result = expand_table(result, &res_cap);
+            if (!result) goto error;
+        }
+        cur_step.old_clr = cur_c;
+        cur_step.old_stt = cur_s;
+        result[res_cnt++] = cur_step;
+
+    no_step:
+        switch (*table++) {
+            case '\0':
+                if (!first_row_parsed)
+                    max_c = cur_c + 1;
+                max_s = cur_s + 1;
+                --table;
+            break;
+            case ',': cur_c++; break;
+            case ';':
+                if (!first_row_parsed) {
+                    max_c = cur_c + 1;
+                    first_row_parsed = true;
+                }
+                cur_s++; cur_c = 0;
+            break;
+
+            default: error_msgf("unexpected character '%c'", table[-1]);
+        }
+    } while (*table);
+
+    tmp = realloc(result, res_cnt * sizeof *tmp);
+    if (!tmp) error_msg("couldn't shrink table");
+    qsort(tmp, res_cnt, sizeof *tmp, cmp_turmite_step);
+
+    *count = res_cnt;
+    *colors = max_c;
+    *states = max_s;
+
+    return tmp;
+error:
+    free(result);
+    return NULL;
 }
 
 static int decode_rle(template_t* tmpl, ulong* x, ulong* y, const char* line, uchar gens) {
@@ -1201,9 +1276,8 @@ static template_t parse_rle_file(const char* path, uchar gens, ulong width, ulon
         } else
             break;
 
-    scanned = sscanf(line, "x = %lu , y = %lu , "
-        "rule = %*"stringify(MAX_RULE_LENGTH)"s", &new.width, &new.height);
-    if (scanned != 2) error_msg("couldn't read x-y-rule info");
+    scanned = sscanf(line, "x = %lu , y = %lu", &new.width, &new.height);
+    if (scanned != 2) error_msg("couldn't read x-y info");
 
     if (new.width  == 0 || new.width  > width)
         error_msg("incorrect value for template width");
@@ -1308,14 +1382,14 @@ void move_to_right(uchar* field, size_t width, size_t heigth) {
     }
 }
 
-void move_to_up_by_3(uchar* field, size_t width, size_t heigth) {
-    memmove(field + width * 3, field, width * heigth);
-    memcpy(field, field + width * heigth, width * 3);
+void move_to_up_by_5(uchar* field, size_t width, size_t heigth) {
+    memmove(field + width * 5, field, width * heigth);
+    memcpy(field, field + width * heigth, width * 5);
 }
 
-void move_to_down_by_3(uchar* field, size_t width, size_t heigth) {
-    memcpy(field + width * heigth, field, width * 3);
-    memmove(field, field + width * 3, width * heigth);
+void move_to_down_by_5(uchar* field, size_t width, size_t heigth) {
+    memcpy(field + width * heigth, field, width * 5);
+    memmove(field, field + width * 5, width * heigth);
 }
 
 void move_to_left_by_10(uchar* field, size_t width, size_t heigth) {
