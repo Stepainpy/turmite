@@ -85,7 +85,7 @@ typedef unsigned bit32_t;
 #define ALIVE_CURSOR_BLOCK ALIVE_CURSOR ALIVE_CURSOR
 
 #define MIN_FIELD_WIDTH  14
-#define MIN_FIELD_HEIGHT 1
+#define MIN_FIELD_HEIGHT 5
 #define MAX_FIELD_WIDTH  1000
 #define MAX_FIELD_HEIGHT 1000
 
@@ -520,15 +520,15 @@ template_t parse_rle(const char* rle, uchar gens, ulong width, ulong height);
 
 void draw_border(ulong w, ulong h);
 
-void move_to_up   (uchar* field, size_t width, size_t heigth);
-void move_to_down (uchar* field, size_t width, size_t heigth);
-void move_to_left (uchar* field, size_t width, size_t heigth);
-void move_to_right(uchar* field, size_t width, size_t heigth);
+void move_to_up   (uchar* field, turmite_t* tms, size_t width, size_t height);
+void move_to_down (uchar* field, turmite_t* tms, size_t width, size_t height);
+void move_to_left (uchar* field, turmite_t* tms, size_t width, size_t height);
+void move_to_right(uchar* field, turmite_t* tms, size_t width, size_t height);
 
-void move_to_up_by_5    (uchar* field, size_t width, size_t heigth);
-void move_to_down_by_5  (uchar* field, size_t width, size_t heigth);
-void move_to_left_by_10 (uchar* field, size_t width, size_t heigth);
-void move_to_right_by_10(uchar* field, size_t width, size_t heigth);
+void move_to_up_by_10   (uchar* field, turmite_t* tms, size_t width, size_t height);
+void move_to_down_by_10 (uchar* field, turmite_t* tms, size_t width, size_t height);
+void move_to_left_by_10 (uchar* field, turmite_t* tms, size_t width, size_t height);
+void move_to_right_by_10(uchar* field, turmite_t* tms, size_t width, size_t height);
 
 void flip_horizontally(template_t* tmpl);
 void flip_vertically  (template_t* tmpl);
@@ -747,7 +747,7 @@ int main(int argc, char** argv) {
 
     /* Allocation memory for field */
     /* additional lines for moving of field */
-    field = malloc(width * (height + 5));
+    field = malloc(width * (height + 10));
     if (!field) error_msg("couldn't allocate memory");
     saved_field = malloc(width * height);
     if (!saved_field) error_msg("couldn't allocate memory");
@@ -866,21 +866,15 @@ restart: /* Initialization of fields */
                         case 'r': full_alive_only = false; goto restart;
                         case 'R': full_alive_only =  true; goto restart;
 
-                        case 'w': move_to_up   (field, width, height); break;
-                        case 's': move_to_down (field, width, height); break;
-                        case 'a': move_to_left (field, width, height); break;
-                        case 'd': move_to_right(field, width, height); break;
+                        case 'w': move_to_up   (field, turmite_slots, width, height); break;
+                        case 's': move_to_down (field, turmite_slots, width, height); break;
+                        case 'a': move_to_left (field, turmite_slots, width, height); break;
+                        case 'd': move_to_right(field, turmite_slots, width, height); break;
 
-                        case 'W':
-                            move_to_up_by_5(field, width, height);
-                            move_to_up_by_5(field, width, height);
-                            break;
-                        case 'S':
-                            move_to_down_by_5(field, width, height);
-                            move_to_down_by_5(field, width, height);
-                            break;
-                        case 'A': move_to_left_by_10 (field, width, height); break;
-                        case 'D': move_to_right_by_10(field, width, height); break;
+                        case 'W': move_to_up_by_10   (field, turmite_slots, width, height); break;
+                        case 'S': move_to_down_by_10 (field, turmite_slots, width, height); break;
+                        case 'A': move_to_left_by_10 (field, turmite_slots, width, height); break;
+                        case 'D': move_to_right_by_10(field, turmite_slots, width, height); break;
 
                         case 'f': field_is_saved = true; memcpy(saved_field, field, width * height); break;
                         case 'F': field_is_saved = false; break;
@@ -1356,56 +1350,72 @@ void draw_border(ulong w, ulong h) {
     fputs(RD_CORNER, stdout);
 }
 
-void move_to_up(uchar* field, size_t width, size_t heigth) {
-    memmove(field + width, field, width * heigth);
-    memcpy(field, field + width * heigth, width);
+void move_to_up(uchar* field, turmite_t* tms, size_t width, size_t height) {
+    int i; for (i = 0; i < COUNT_TURMITE_SLOT; i++)
+        tms[i].y = (tms[i].y + 1) % height;
+    memmove(field + width, field, width * height);
+    memcpy(field, field + width * height, width);
 }
 
-void move_to_down(uchar* field, size_t width, size_t heigth) {
-    memcpy(field + width * heigth, field, width);
-    memmove(field, field + width, width * heigth);
+void move_to_down(uchar* field, turmite_t* tms, size_t width, size_t height) {
+    int i; for (i = 0; i < COUNT_TURMITE_SLOT; i++)
+        tms[i].y = (tms[i].y + height - 1) % height;
+    memcpy(field + width * height, field, width);
+    memmove(field, field + width, width * height);
 }
 
-void move_to_left(uchar* field, size_t width, size_t heigth) {
-    size_t i; for (i = 0; i < heigth; i++) {
+void move_to_left(uchar* field, turmite_t* tms, size_t width, size_t height) {
+    size_t i; for (i = 0; i < height; i++) {
         uchar right = field[width * i + width - 1];
         memmove(field + width * i + 1, field + width * i, width - 1);
         field[width * i] = right;
     }
+    for (i = 0; i < COUNT_TURMITE_SLOT; i++)
+        tms[i].x = (tms[i].x + 1) % width;
 }
 
-void move_to_right(uchar* field, size_t width, size_t heigth) {
-    size_t i; for (i = 0; i < heigth; i++) {
+void move_to_right(uchar* field, turmite_t* tms, size_t width, size_t height) {
+    size_t i; for (i = 0; i < height; i++) {
         uchar left = field[width * i];
         memmove(field + width * i, field + width * i + 1, width - 1);
         field[width * i + width - 1] = left;
     }
+    for (i = 0; i < COUNT_TURMITE_SLOT; i++)
+        tms[i].x = (tms[i].x + width - 1) % width;
 }
 
-void move_to_up_by_5(uchar* field, size_t width, size_t heigth) {
-    memmove(field + width * 5, field, width * heigth);
-    memcpy(field, field + width * heigth, width * 5);
+void move_to_up_by_10(uchar* field, turmite_t* tms, size_t width, size_t height) {
+    int i; for (i = 0; i < COUNT_TURMITE_SLOT; i++)
+        tms[i].y = (tms[i].y + 10) % height;
+    memmove(field + width * 10, field, width * height);
+    memcpy(field, field + width * height, width * 10);
 }
 
-void move_to_down_by_5(uchar* field, size_t width, size_t heigth) {
-    memcpy(field + width * heigth, field, width * 5);
-    memmove(field, field + width * 5, width * heigth);
+void move_to_down_by_10(uchar* field, turmite_t* tms, size_t width, size_t height) {
+    int i; for (i = 0; i < COUNT_TURMITE_SLOT; i++)
+        tms[i].y = (tms[i].y + height - 10) % height;
+    memcpy(field + width * height, field, width * 10);
+    memmove(field, field + width * 10, width * height);
 }
 
-void move_to_left_by_10(uchar* field, size_t width, size_t heigth) {
+void move_to_left_by_10(uchar* field, turmite_t* tms, size_t width, size_t heigth) {
     size_t i; for (i = 0; i < heigth; i++) {
         uchar right[10]; memcpy(right, field + width * i + width - 10, 10);
         memmove(field + width * i + 10, field + width * i, width - 10);
         memcpy(field + width * i, right, 10);
     }
+    for (i = 0; i < COUNT_TURMITE_SLOT; i++)
+        tms[i].x = (tms[i].x + 10) % width;
 }
 
-void move_to_right_by_10(uchar* field, size_t width, size_t heigth) {
+void move_to_right_by_10(uchar* field, turmite_t* tms, size_t width, size_t heigth) {
     size_t i; for (i = 0; i < heigth; i++) {
         uchar left[10]; memcpy(left, field + width * i, 10);
         memmove(field + width * i, field + width * i + 10, width - 10);
         memcpy(field + width * i + width - 10, left, 10);
     }
+    for (i = 0; i < COUNT_TURMITE_SLOT; i++)
+        tms[i].x = (tms[i].x + width - 10) % width;
 }
 
 void flip_horizontally(template_t* tmpl) {
