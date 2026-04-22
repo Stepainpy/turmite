@@ -840,6 +840,13 @@ restart: /* Initialization of fields */
         }
         fputs(ESC"0m", stdout);
 
+        fputs(ESC"31m", stdout);
+        for (i = 0; i < COUNT_TURMITE_SLOT; i++)
+            if (turmite_slots[i].alive)
+                printf(ESC"%u;%uH" ALIVE_CELL_BLOCK,
+                    turmite_slots[i].y + 2, 2 * turmite_slots[i].x + 2);
+        fputs(ESC"0m", stdout);
+
         /* Handling pressing keys */
         if (mode == MODE_ONESTEP) mode = MODE_PAUSE;
         if (is_symbol_received()) {
