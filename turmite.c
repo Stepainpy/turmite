@@ -101,6 +101,10 @@ typedef unsigned bit32_t;
 #define COUNT_TURMITE_SLOT  16
 #define COUNT_TEMPLATE_SLOT 10
 
+#define STEPS_LVL1 1
+#define STEPS_LVL2 100
+#define STEPS_LVL3 1000
+
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  *                          Support macro-functions                          *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -192,6 +196,9 @@ typedef unsigned bit32_t;
     " Sh-R   Reset simulation with only full alive cells" "\n" \
     "    P   Set/unset pause"                             "\n" \
     "    O   Make one simulation step in pause"           "\n" \
+    "    N   Set x"stringify(STEPS_LVL1)" for simulation" "\n" \
+    "    B   Set x"stringify(STEPS_LVL2)" for simulation" "\n" \
+    " Sh-B   Set x"stringify(STEPS_LVL3)" for simulation" "\n" \
     "    F   Save current field (restore after press R)"  "\n" \
     " Sh-F   Erase saved field"                           "\n" \
 
@@ -547,7 +554,7 @@ int main(int argc, char** argv) {
     size_t i, j, k; int rc = EXIT_FAILURE;
 
     /* Parameters of simulation */
-    ulong width, height, indent;
+    ulong width, height, indent, sim_steps;
     float prob; uchar gens, brush;
 
     bool full_alive_only = false;
@@ -738,6 +745,7 @@ int main(int argc, char** argv) {
         gens = tm_clrs - 1;
     }
 
+    sim_steps = STEPS_LVL1;
     prob = (float)prob_int / 100.f;
     brush = gens;
 
@@ -902,6 +910,10 @@ restart: /* Initialization of fields */
                         case 'f': field_is_saved = true; memcpy(saved_field, field, width * height); break;
                         case 'F': field_is_saved = false; break;
 
+                        case 'n': sim_steps = STEPS_LVL1; break;
+                        case 'b': sim_steps = STEPS_LVL2; break;
+                        case 'B': sim_steps = STEPS_LVL3; break;
+
                         case 'e': {
                             cursor_x = width  / 2;
                             cursor_y = height / 2;
@@ -1063,26 +1075,27 @@ restart: /* Initialization of fields */
         if (mode == MODE_SIMULATION || mode == MODE_ONESTEP) {
             turmite_t* tm = turmite_slots;
             turmite_step_t step, *ptr;
-            for (; tm < turmite_slots + COUNT_TURMITE_SLOT; tm++) if (tm->alive) {
-                step.old_clr = FLDV(tm->y, tm->x);
-                step.old_stt = tm->state;
-                ptr = bsearch(&step, step_table, step_table_count, sizeof step, cmp_turmite_step);
-                if (!ptr) { tm->alive = false; continue; } else step = *ptr;
+            for (; tm < turmite_slots + COUNT_TURMITE_SLOT; tm++)
+                if (tm->alive) for (i = 0; i < sim_steps; i++) {
+                    step.old_clr = FLDV(tm->y, tm->x);
+                    step.old_stt = tm->state;
+                    ptr = bsearch(&step, step_table, step_table_count, sizeof step, cmp_turmite_step);
+                    if (!ptr) { tm->alive = false; continue; } else step = *ptr;
 
-                FLDV(tm->y, tm->x) = step.new_clr;
-                tm->state = step.new_stt;
-                if (step.dir < DIR_FORWARD)
-                    tm->dir = step.dir;
-                else
-                    tm->dir = (tm->dir + step.dir) & 3;
+                    FLDV(tm->y, tm->x) = step.new_clr;
+                    tm->state = step.new_stt;
+                    if (step.dir < DIR_FORWARD)
+                        tm->dir = step.dir;
+                    else
+                        tm->dir = (tm->dir + step.dir) & 3;
 
-                switch (tm->dir) {
-                    case DIR_NORTH: tm->y = (tm->y == 0 ? height : tm->y)    - 1; break;
-                    case DIR_SOUTH: tm->y =  tm->y == height - 1 ? 0 : tm->y + 1; break;
-                    case DIR_WEST : tm->x = (tm->x == 0 ? width  : tm->x)    - 1; break;
-                    case DIR_EAST : tm->x =  tm->x == width  - 1 ? 0 : tm->x + 1; break;
+                    switch (tm->dir) {
+                        case DIR_NORTH: tm->y = (tm->y == 0 ? height : tm->y)    - 1; break;
+                        case DIR_SOUTH: tm->y =  tm->y == height - 1 ? 0 : tm->y + 1; break;
+                        case DIR_WEST : tm->x = (tm->x == 0 ? width  : tm->x)    - 1; break;
+                        case DIR_EAST : tm->x =  tm->x == width  - 1 ? 0 : tm->x + 1; break;
+                    }
                 }
-            }
         }
 
         /* Update screen */
