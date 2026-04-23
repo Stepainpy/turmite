@@ -143,14 +143,14 @@ typedef unsigned bit32_t;
 #define ITL ESC"3m"
 
 #define HELPMSG_NAME \
-    "NAME:"                                              "\n" \
-    "    gollike - Game of Life like automata simulator" "\n" \
+    "NAME:"                                  "\n" \
+    "    turmite - Turing machine + termite" "\n" \
 
 #define HELPMSG_USAGE \
     "USAGE:"                                                                              "\n" \
-    "  $ gollike [-a | [-w "ITL"width"RST"] [-h "ITL"height"RST"]] [-i "ITL"indent"RST"]" "\n" \
-    "            [-r "ITL"rule"RST"] [-c "ITL"colors"RST"] [-p "ITL"probability"RST"]"    "\n" \
-    "            [-[1-9] "ITL"pattern"RST" | @"ITL"path"RST"] [--help]"                   "\n" \
+    "  $ turmite [-a | [-w "ITL"width"RST"] [-h "ITL"height"RST"]] [-i "ITL"indent"RST"]" "\n" \
+    "            [-t "ITL"table"RST"] [-c "ITL"colors"RST"] [-p "ITL"probability"RST"]"   "\n" \
+    "            [-[1-9] ("ITL"pattern"RST"|@"ITL"path"RST")] [--help]"                   "\n" \
 
 #define HELPMSG_OPTIONS_PT1 \
     "OPTIONS:"                                                                                 "\n" \
@@ -160,8 +160,8 @@ typedef unsigned bit32_t;
     "    -i, --indent "ITL"indent"RST"             Sets indent from border for spawning cells" "\n" \
 
 #define HELPMSG_OPTIONS_PT2 \
-    "    -r, --rule "ITL"rule"RST"                 " \
-        "Sets a rule for a cellular automaton, using the format described below" "\n" \
+    "    -t, --table "ITL"table"RST"               " \
+        "Sets a rules for a turmite, using the format described below" "\n" \
     "    -c, --colors "ITL"colors"RST"             " \
         "Sets palette for drawing cell states, using format described below" "\n" \
     "    -p, --probability "ITL"probability"RST"   " \
