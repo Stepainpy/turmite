@@ -222,25 +222,24 @@ typedef unsigned bit32_t;
     " Sh-R   90 degree rotation by counterclockwise of template" "\n" \
 
 #define HELPMSG_RULE_SYNTAX \
-    "RULE SYNTAX:"                                                 "\n" \
-    "  Pattern (case insensitive): B<digits>/S<digits>[/G<count>]" "\n" \
-    "    <digits> in the range from 0 to 8 inclusive"              "\n" \
-    "    B<digits> - The number of neighbors to become alive"      "\n" \
-    "    S<digits> - The number of neighbors to stay alive"        "\n" \
-    "    G<count>  - The count of possible states (default 2)"     "\n" \
+    "RULE SYNTAX:"                                                              "\n" \
+    "  Transition rule: <newc><dir/turn><news>"                                 "\n" \
+    "    <newc>     - draw this color on field"                                 "\n" \
+    "    <dir/turn> - new direction -> N/S/E/W i.e. north, south, east or west" "\n" \
+    "                 or turn -> F/B/R/L i.e. forward, backward, right or left" "\n" \
+    "    <news>     - set this state for turmite"                               "\n" \
+    "  Table is list of rules where:"                                           "\n" \
+    "    1) columns delimiter is comma (,)"                                     "\n" \
+    "    2) rows delimiter is semicolon (;)"                                    "\n" \
+    "    3) rules maybe not writes"                                             "\n" \
 
 #define HELPMSG_RULE_EXAMPLE \
-    "  Examples:"                                              "\n" \
-    "    B3/S23        - Conway's Game of life (default rule)" "\n" \
-    "    B3/S012345678 - Life without Death"                   "\n" \
-    "    B3678/S34678  - Day & Night"                          "\n" \
-    "    B35678/S5678  - Diamoeba"                             "\n" \
-    "    B368/S245     - Morley"                               "\n" \
-    "    B34/S34       - 34 Life"                              "\n" \
-    "    B2/S          - Seeds"                                "\n" \
-    "    B2/S/G3       - Brian's Brain"                        "\n" \
-    "    B2/S345/G4    - Star Wars"                            "\n" \
-    "    B34/S12/G3    - Frogs"                                "\n" \
+    "  Examples:"                                             "\n" \
+    "    1R0,0L0              - Langton's ant (default rule)" "\n" \
+    "    1R0,1R1;0F0,0F1      - square rings"                 "\n" \
+    "    1F1,1L0;1R1,0F0      - spiral growth"                "\n" \
+    "    1L0,1R1;0R0,0L1      - square with texture"          "\n" \
+    "    1L1,1R0;1B1,1B2;,0B0 - square snowflake"             "\n" \
 
 #define HELPMSG_TEMPLATE_SYNTAX_PT1 \
     "TEMPLATE SYNTAX:"                                                                                "\n" \
