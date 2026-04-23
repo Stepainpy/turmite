@@ -147,10 +147,10 @@ typedef unsigned bit32_t;
     "    turmite - Turing machine + termite" "\n" \
 
 #define HELPMSG_USAGE \
-    "USAGE:"                                                                              "\n" \
-    "  $ turmite [-a | [-w "ITL"width"RST"] [-h "ITL"height"RST"]] [-i "ITL"indent"RST"]" "\n" \
-    "            [-t "ITL"table"RST"] [-c "ITL"colors"RST"] [-p "ITL"probability"RST"]"   "\n" \
-    "            [-[1-9] ("ITL"pattern"RST"|@"ITL"path"RST")] [--help]"                   "\n" \
+    "USAGE:"                                                                                 "\n" \
+    "  $ turmite [-a | [-w "ITL"width"RST"] [-h "ITL"height"RST"]] [-i "ITL"indent"RST"]"    "\n" \
+    "            [-C "ITL"color"RST"] [-c "ITL"colors"RST"] [-p "ITL"probability"RST"]"      "\n" \
+    "            [-t "ITL"table"RST"] [-[1-9] ("ITL"pattern"RST"|@"ITL"path"RST")]"          "\n" \
 
 #define HELPMSG_OPTIONS_PT1 \
     "OPTIONS:"                                                                                 "\n" \
@@ -158,12 +158,13 @@ typedef unsigned bit32_t;
     "    -w, --width "ITL"width"RST"               Sets width of field"                        "\n" \
     "    -h, --height "ITL"height"RST"             Sets height of field"                       "\n" \
     "    -i, --indent "ITL"indent"RST"             Sets indent from border for spawning cells" "\n" \
+    "    -C, --head-color "ITL"color"RST"          Sets color for alive turmite"               "\n" \
 
 #define HELPMSG_OPTIONS_PT2 \
-    "    -t, --table "ITL"table"RST"               " \
-        "Sets a rules for a turmite, using the format described below" "\n" \
     "    -c, --colors "ITL"colors"RST"             " \
         "Sets palette for drawing cell states, using format described below" "\n" \
+    "    -t, --table "ITL"table"RST"               " \
+        "Sets a rules for a turmite, using the format described below" "\n" \
     "    -p, --probability "ITL"probability"RST"   " \
         "Sets the probability as precent of a cell appearing at the beginning and at restart" "\n" \
     "    -1, -2, ..., -9 "ITL"pattern"RST"|@"ITL"path"RST"   Sets a template in slot #, using format described below" "\n" \
@@ -507,6 +508,7 @@ typedef struct {
     ulong height;
 } template_t;
 
+static char    tm_color [256]     = {0};
 static char state_colors[256][16] = {0};
 
 int cmp_turmite_step(const void* lhs, const void* rhs);
@@ -542,7 +544,7 @@ int received_symbol(void);
 
 int main(int argc, char** argv) {
     ulong prob_int, tm_clrs, tm_stts;
-    size_t i, j; int rc = EXIT_FAILURE;
+    size_t i, j, k; int rc = EXIT_FAILURE;
 
     /* Parameters of simulation */
     ulong width, height, indent;
@@ -578,12 +580,13 @@ int main(int argc, char** argv) {
 #define FLDP(i, j) (field + width * (i) + (j))
 
     /* Flag parsed options */
-    bool   prob_is_set = false;
-    bool  table_is_set = false;
-    bool  width_is_set = false;
-    bool height_is_set = false;
-    bool indent_is_set = false;
-    bool colors_is_set = false;
+    bool     prob_is_set = false;
+    bool    table_is_set = false;
+    bool    width_is_set = false;
+    bool   height_is_set = false;
+    bool   indent_is_set = false;
+    bool   colors_is_set = false;
+    bool tm_color_is_set = false;
 
     (void)shift_arg(); /* skip program name */
 
@@ -704,6 +707,16 @@ int main(int argc, char** argv) {
 
             if (i < 2) error_msg("not enough colors");
             state_colors[0][2] = '4';
+        } else if (strcmp(opt, "-C") == 0 || strcmp(opt, "--ant-color") == 0) {
+            ulong color_id;
+            if (!arg) error_msg("not enough arguments for option");
+            if (tm_color_is_set) error_msg("color values has already been set");
+            tm_color_is_set = true;
+
+            color_id = strtoul(arg, &end, 10);
+            if (*end != '\0' || color_id > 255)
+                error_msg("incorrect value for ant color");
+            sprintf(tm_color, ESC"38;5;%lum", color_id);
         } else if (opt[0] == '-' && ('1' <= opt[1] && opt[1] <= '9') && opt[2] == '\0') {
             ulong slot_index = opt[1] - '1';
             if (!arg) error_msg("not enough arguments for option");
@@ -796,7 +809,17 @@ restart: /* Initialization of fields */
             for (j = 0; j < width; j++) {
                 uchar cell = FLDV(i, j);
                 bool has_cell = cell > 0;
+                bool has_head = false;
+                for (k = 0; tm_color_is_set && k < COUNT_TURMITE_SLOT; k++)
+                    if (turmite_slots[k].alive  &&
+                        turmite_slots[k].y == i &&
+                        turmite_slots[k].x == j) {
+                        has_cell = has_head = true;
+                        fputs(tm_color, stdout);
+                        goto breakout;
+                    }
                 fputs(state_colors[cell], stdout);
+            breakout:
                 switch(mode) {
                     case MODE_SIMULATION: case MODE_PAUSE: case MODE_ONESTEP:
                         fputs(has_cell ? ALIVE_CELL_BLOCK : DEAD_CELL_BLOCK, stdout);
@@ -834,16 +857,10 @@ restart: /* Initialization of fields */
                             fputs(has_cell ? ALIVE_CELL_BLOCK : DEAD_CELL_BLOCK, stdout);
                     } break;
                 }
+                if (tm_color_is_set && has_head) fputs(ESC"0m", stdout);
             }
             fputs(ESC"2G" ESC"1B", stdout);
         }
-        fputs(ESC"0m", stdout);
-
-        fputs(ESC"31m", stdout);
-        for (i = 0; i < COUNT_TURMITE_SLOT; i++)
-            if (turmite_slots[i].alive)
-                printf(ESC"%u;%uH" ALIVE_CELL_BLOCK,
-                    turmite_slots[i].y + 2, 2 * turmite_slots[i].x + 2);
         fputs(ESC"0m", stdout);
 
         /* Handling pressing keys */
