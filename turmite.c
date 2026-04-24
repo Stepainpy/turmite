@@ -554,8 +554,9 @@ int main(int argc, char** argv) {
     size_t i, j, k; int rc = EXIT_FAILURE;
 
     /* Parameters of simulation */
-    ulong width, height, indent, sim_steps;
     float prob; uchar gens, brush;
+    ulong width, height, indent;
+    ulong sim_steps = STEPS_LVL1;
 
     bool full_alive_only = false;
     bool field_is_saved  = false;
@@ -745,7 +746,7 @@ int main(int argc, char** argv) {
         gens = tm_clrs - 1;
     }
 
-    sim_steps = STEPS_LVL1;
+    /* Set derived value */
     prob = (float)prob_int / 100.f;
     brush = gens;
 
