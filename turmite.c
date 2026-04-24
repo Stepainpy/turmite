@@ -201,7 +201,7 @@ typedef unsigned bit32_t;
     "    F   Save current field (restore after press R)"  "\n" \
     " Sh-F   Erase saved field"                           "\n" \
 
-#define HELPMSG_KEYS_EDIT \
+#define HELPMSG_KEYS_EDIT_PT1 \
     "  Edit mode:"                                "\n" \
     "    R   Enable/disable rectagular selection" "\n" \
     " Sh-C   Clear all field"                     "\n" \
@@ -212,6 +212,13 @@ typedef unsigned bit32_t;
     "    K   Make cell with value of brush"       "\n" \
     "    J   Decrement brush value"               "\n" \
     "    L   increment brush value"               "\n" \
+
+#define HELPMSG_KEYS_EDIT_PT2 \
+    "    I   Insert turmite by cursor position"   "\n" \
+    "    U   Decrement state value for turmite"   "\n" \
+    "    O   Increment state value for turmite"   "\n" \
+    "    P   Change direction by N->E->S->W->N"   "\n" \
+    " Sh-P   Change direction by N->W->S->E->N"   "\n" \
     "    C   Copy selected area to buffer"        "\n" \
     "    X   Cut selected area to buffer"         "\n" \
     "    0   Enable template from buffer"         "\n" \
@@ -615,7 +622,8 @@ int main(int argc, char** argv) {
             putchar('\n'); fputs(HELPMSG_OPTIONS_PT3         , stdout);
             putchar('\n'); fputs(HELPMSG_KEYS_COMMON         , stdout);
             putchar('\n'); fputs(HELPMSG_KEYS_SIM            , stdout);
-            putchar('\n'); fputs(HELPMSG_KEYS_EDIT           , stdout);
+            putchar('\n'); fputs(HELPMSG_KEYS_EDIT_PT1       , stdout);
+                           fputs(HELPMSG_KEYS_EDIT_PT2       , stdout);
             putchar('\n'); fputs(HELPMSG_KEYS_TEMPLATE       , stdout);
             putchar('\n'); fputs(HELPMSG_RULE_SYNTAX         , stdout);
             putchar('\n'); fputs(HELPMSG_RULE_EXAMPLE        , stdout);
