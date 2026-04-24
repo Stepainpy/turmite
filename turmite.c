@@ -84,7 +84,7 @@ typedef unsigned bit32_t;
 #define  DEAD_CURSOR_BLOCK DEAD_CURSOR DEAD_CURSOR
 #define ALIVE_CURSOR_BLOCK ALIVE_CURSOR ALIVE_CURSOR
 
-#define MIN_FIELD_WIDTH  14
+#define MIN_FIELD_WIDTH  16
 #define MIN_FIELD_HEIGHT 5
 #define MAX_FIELD_WIDTH  1000
 #define MAX_FIELD_HEIGHT 1000
@@ -381,7 +381,8 @@ typedef unsigned bit32_t;
 #define HOR_BAR_LINE \
     HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
     HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
-    HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR
+    HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR HOR_BAR \
+    HOR_BAR HOR_BAR
 
 /* Maximum min-width case  * * * *
  * -< C256/S256 | DDxDD/100% >-  *
@@ -390,7 +391,7 @@ typedef unsigned bit32_t;
 
 #define MODE_TXT_SIMULATION "SIMULATION"
 #define MODE_TXT_PAUSE      "PAUSE"
-#define MODE_TXT_CURSOR     "CURSOR: %lux%lu %u"
+#define MODE_TXT_CURSOR     "CURSOR: %lux%lu %u %c %u"
 #define MODE_TXT_RECTANGLE  "RECTANGLE: %lux%lu"
 #define MODE_TXT_TEMPLATE   "TEMPLATE: %lux%lu #%u"
 #define MODE_TXT_CLIPBOARD  "CLIPBOARD: %lux%lu"
@@ -399,7 +400,7 @@ typedef unsigned bit32_t;
 #define PUT_BAR_SIMULATION do { CLEAR_BAR; fputs(LVER_BAR" "MODE_TXT_SIMULATION" "RVER_BAR, stdout); } while (0)
 #define PUT_BAR_PAUSE      do { CLEAR_BAR; fputs(LVER_BAR" "MODE_TXT_PAUSE     " "RVER_BAR, stdout); } while (0)
 #define PUT_BAR_CURSOR do { CLEAR_BAR; \
-    printf(LVER_BAR" "MODE_TXT_CURSOR" "RVER_BAR, cursor_x, cursor_y, brush); \
+    printf(LVER_BAR" "MODE_TXT_CURSOR" "RVER_BAR, cursor_x, cursor_y, brush, "NESW"[dir_brush], state_brush); \
 } while (0)
 #define PUT_BAR_RECTANGLE do { CLEAR_BAR; \
     printf(LVER_BAR" "MODE_TXT_RECTANGLE" "RVER_BAR, \
@@ -420,7 +421,7 @@ static_assert(strlitlen(HOR_BAR_LINE) / strlitlen(HOR_BAR) == 2 * MIN_FIELD_WIDT
 
 static_assert(strlitlen(MODE_TXT_SIMULATION) + 6 <= 2 * MIN_FIELD_WIDTH);
 static_assert(strlitlen(MODE_TXT_PAUSE     ) + 6 <= 2 * MIN_FIELD_WIDTH);
-static_assert(strlitlen(MODE_TXT_CURSOR    ) + 5 <= 2 * MIN_FIELD_WIDTH);
+static_assert(strlitlen(MODE_TXT_CURSOR    ) + 7 <= 2 * MIN_FIELD_WIDTH);
 static_assert(strlitlen(MODE_TXT_RECTANGLE ) + 6 <= 2 * MIN_FIELD_WIDTH);
 static_assert(strlitlen(MODE_TXT_TEMPLATE  ) + 5 <= 2 * MIN_FIELD_WIDTH);
 static_assert(strlitlen(MODE_TXT_CLIPBOARD ) + 6 <= 2 * MIN_FIELD_WIDTH);
@@ -553,7 +554,9 @@ int main(int argc, char** argv) {
     size_t i, j; int rc = EXIT_FAILURE;
 
     /* Parameters of simulation */
-    float prob; uchar gens, brush;
+    uchar brush, state_brush;
+    turmite_dir_t dir_brush;
+    float prob; uchar gens;
     ulong width, height, indent;
     ulong sim_steps = STEPS_LVL1;
 
@@ -749,6 +752,8 @@ int main(int argc, char** argv) {
     /* Set derived value */
     prob = (float)prob_int / 100.f;
     brush = gens;
+    dir_brush = DIR_NORTH;
+    state_brush = 0;
 
     /* Checking colors for states */
     if (colors_is_set && strlen(state_colors[gens]) == 0)
@@ -946,6 +951,19 @@ restart: /* Initialization of fields and turmite */
                     else if (key == 'b') FLDV(cursor_y, cursor_x) = gens;
                     else if (key == 't') FLDV(cursor_y, cursor_x) = gens - FLDV(cursor_y, cursor_x);
                     else if (key == 'k') FLDV(cursor_y, cursor_x) = brush;
+
+                    else if (key == 'u') { if (state_brush >           0) state_brush -= 1; }
+                    else if (key == 'o') { if (state_brush < tm_stts - 1) state_brush += 1; }
+                    else if (key == 'p') dir_brush = (dir_brush + 1) & 3;
+                    else if (key == 'P') dir_brush = (dir_brush - 1) & 3;
+
+                    else if (key == 'i') {
+                        turmite.alive = true;
+                        turmite.x = cursor_x;
+                        turmite.y = cursor_y;
+                        turmite.dir = dir_brush;
+                        turmite.state = state_brush;
+                    }
 
                     goto common_CUR_and_RECT;
                 case MODE_RECTANGLE:
