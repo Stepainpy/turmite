@@ -20,11 +20,6 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.                                    *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-/* Without this define, usleep not defined */
-#if defined(__linux__)
-#  define _DEFAULT_SOURCE
-#endif
-
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -94,9 +89,6 @@ typedef unsigned bit32_t;
 #define DEFAULT_WIDTH  50
 #define DEFAULT_HEIGHT 25
 #define DEFAULT_INDENT 0
-
-#define FRAMES_REP_SECOND    500 /* frame ~ one simulation step */
-#define DELAY_IN_MILLISECOND (1000 / FRAMES_REP_SECOND)
 
 #define COUNT_TEMPLATE_SLOT 10
 
@@ -552,7 +544,6 @@ void transpose(template_t* tmpl, bit32_t* bitset);
 
 void setup_terminal(void);
 bool get_console_size(ulong* width, ulong* height);
-void sleep_ms(ulong ms);
 bool is_symbol_received(void);
 int received_symbol(void);
 
@@ -1124,7 +1115,7 @@ restart: /* Initialization of fields and turmite */
         }
 
         /* Update screen */
-        fflush(stdout); sleep_ms(DELAY_IN_MILLISECOND);
+        fflush(stdout);
     }
 
     fputs(ESC"?25h", stdout); /* show cursor */
@@ -1564,8 +1555,6 @@ bool get_console_size(ulong* width, ulong* height) {
         return false;
 }
 
-void sleep_ms(ulong ms) { Sleep(ms); }
-
 bool is_symbol_received(void) { return kbhit(); }
 
 int received_symbol(void) { return getch(); }
@@ -1607,8 +1596,6 @@ bool get_console_size(ulong* width, ulong* height) {
     } else
         return false;
 }
-
-void sleep_ms(ulong ms) { usleep(ms * 1000); }
 
 bool is_symbol_received(void) {
     int n; unsigned char ch;
