@@ -527,15 +527,15 @@ template_t parse_rle(const char* rle, uchar gens, ulong width, ulong height);
 
 void draw_border(ulong w, ulong h);
 
-void move_to_up   (uchar* field, turmite_t* tms, size_t width, size_t height);
-void move_to_down (uchar* field, turmite_t* tms, size_t width, size_t height);
-void move_to_left (uchar* field, turmite_t* tms, size_t width, size_t height);
-void move_to_right(uchar* field, turmite_t* tms, size_t width, size_t height);
+void move_to_up   (uchar* field, turmite_t* tm, size_t width, size_t height);
+void move_to_down (uchar* field, turmite_t* tm, size_t width, size_t height);
+void move_to_left (uchar* field, turmite_t* tm, size_t width, size_t height);
+void move_to_right(uchar* field, turmite_t* tm, size_t width, size_t height);
 
-void move_to_up_by_10   (uchar* field, turmite_t* tms, size_t width, size_t height);
-void move_to_down_by_10 (uchar* field, turmite_t* tms, size_t width, size_t height);
-void move_to_left_by_10 (uchar* field, turmite_t* tms, size_t width, size_t height);
-void move_to_right_by_10(uchar* field, turmite_t* tms, size_t width, size_t height);
+void move_to_up_by_10   (uchar* field, turmite_t* tm, size_t width, size_t height);
+void move_to_down_by_10 (uchar* field, turmite_t* tm, size_t width, size_t height);
+void move_to_left_by_10 (uchar* field, turmite_t* tm, size_t width, size_t height);
+void move_to_right_by_10(uchar* field, turmite_t* tm, size_t width, size_t height);
 
 void flip_horizontally(template_t* tmpl);
 void flip_vertically  (template_t* tmpl);
